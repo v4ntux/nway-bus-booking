@@ -32,6 +32,16 @@ class Settings(BaseSettings):
     TELEGRAM_WEBAPP_URL: str = "http://localhost:5173"
 
     @property
+    def database_url(self) -> str:
+        """Normalize Railway/Heroku postgres URLs for async SQLAlchemy."""
+        url = self.DATABASE_URL
+        if url.startswith("postgres://"):
+            return url.replace("postgres://", "postgresql+asyncpg://", 1)
+        if url.startswith("postgresql://") and "+asyncpg" not in url:
+            return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return url
+
+    @property
     def cors_origin_list(self) -> list[str]:
         return [item.strip() for item in self.CORS_ORIGINS.split(",") if item.strip()]
 

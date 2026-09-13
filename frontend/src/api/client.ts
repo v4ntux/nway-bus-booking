@@ -27,6 +27,8 @@ export function clearTokens(): void {
   localStorage.removeItem("nway_refresh_token");
 }
 
+const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "";
+
 export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (!headers.has("Content-Type") && init.body) {
@@ -36,7 +38,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   if (token && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${token}`);
   }
-  const response = await fetch(path, { ...init, headers });
+  const response = await fetch(`${API_BASE}${path}`, { ...init, headers });
   if (!response.ok) {
     let code = "HTTP_ERROR";
     let message = `HTTP ${response.status}`;

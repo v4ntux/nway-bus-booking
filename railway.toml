@@ -1,0 +1,12 @@
+# Default service (repo root): deploy the API backend via root Dockerfile.
+# For the frontend, create a second Railway service with Root Directory = /frontend.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+watchPatterns = ["backend/**", "Dockerfile"]
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"

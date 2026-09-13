@@ -20,6 +20,30 @@ All timestamps are UTC. City timezone is for display only.
 
 Public booking codes look like `JZK-8F2KQ`. Database UUIDs are never shown to passengers.
 
+## Deploy on Railway
+
+Railway fails on the repo root with Railpack because this is a monorepo. Use **Docker** and these services:
+
+### 1. PostgreSQL
+Add the **PostgreSQL** plugin. Copy `DATABASE_URL` into the backend service variables.
+
+### 2. Backend (API)
+- **Root Directory:** leave empty (repo root) — uses root `Dockerfile` + `railway.toml`
+- **Variables:**
+  - `DATABASE_URL` — from Postgres plugin (auto-converted to asyncpg)
+  - `JWT_SECRET` — long random string
+  - `CORS_ORIGINS` — your frontend public URL (comma-separated)
+  - `DEBUG=false`
+  - `RUN_SEED=true` — first deploy only; set `false` later if you want
+
+### 3. Frontend (optional second service)
+- **Root Directory:** `/frontend`
+- **Variables:**
+  - `BACKEND_URL` — public backend URL, e.g. `https://your-api.up.railway.app`
+  - Or set build arg `VITE_API_BASE_URL` to the same URL (direct browser → API calls)
+
+Redeploy after pushing. If build still uses Railpack, set **Settings → Build → Builder** to **Dockerfile**.
+
 ## Run with Docker
 
 ```bash
