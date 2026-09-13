@@ -4,9 +4,15 @@ from functools import lru_cache
 from urllib.parse import urlparse
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 
 def _normalize_asyncpg_url(url: str) -> str:
+    url = url.strip()
+    # Railway's single-variable editor can preserve pasted .env quotes.
+    if len(url) >= 2 and url[0] == url[-1] and url[0] in ("'", '"'):
+        url = url[1:-1].strip()
     if url.startswith("postgres://"):
         return url.replace("postgres://", "postgresql+asyncpg://", 1)
     if url.startswith("postgresql://") and "+asyncpg" not in url:
@@ -49,7 +55,7 @@ class Settings(BaseSettings):
     TELEGRAM_WEBAPP_URL: str = "http://localhost:5173"
 
     def _raw_database_url(self) -> str:
-        """Prefer Railway internal URL, then public DATABASE_URL."""
+        """Prefer the optional private override, then DATABASE_URL."""
         private = self.DATABASE_PRIVATE_URL.strip() or os.environ.get("DATABASE_PRIVATE_URL", "").strip()
         public = os.environ.get("DATABASE_URL", "").strip()
         if private:
@@ -78,15 +84,41 @@ class Settings(BaseSettings):
         return {"ssl": ctx}
 
     def ensure_database_configured(self) -> None:
-        """Fail fast on Railway when Postgres is not linked."""
+        """Reject invalid settings before migrations, without exposing credentials."""
         on_railway = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_SERVICE_NAME"))
         url = self.database_url
+        has_private_override = bool(
+            self.DATABASE_PRIVATE_URL.strip()
+            or os.environ.get("DATABASE_PRIVATE_URL", "").strip()
+        )
+        variable = "DATABASE_PRIVATE_URL" if has_private_override else "DATABASE_URL"
+        fix = (
+            "In Railway, open the backend service → Variables and set DATABASE_URL "
+            "to a reference to your Postgres service's DATABASE_URL "
+            "(for a service named Postgres: ${{Postgres.DATABASE_URL}}). "
+            "Remove or correct DATABASE_PRIVATE_URL if it overrides that value. "
+            "Apply the changes and deploy."
+        )
+        if "${{" in url or "{{" in url:
+            raise RuntimeError(f"{variable} contains an unresolved Railway reference. {fix}")
+        try:
+            parsed = make_url(url)
+            valid = (
+                parsed.drivername == "postgresql+asyncpg"
+                and bool(parsed.host)
+                and bool(parsed.database)
+            )
+        except (ArgumentError, ValueError):
+            valid = False
+        if not valid:
+            raise RuntimeError(
+                f"{variable} must be a complete PostgreSQL connection URL "
+                f"starting with postgresql:// or postgresql+asyncpg://. {fix}"
+            ) from None
         if on_railway and _is_local_db(url):
             raise RuntimeError(
-                "PostgreSQL is not linked to this Railway service.\n"
-                "Fix: open your backend service → Variables → New Variable → "
-                "Reference → select Postgres → choose DATABASE_PRIVATE_URL "
-                "(or DATABASE_URL) → Redeploy."
+                "PostgreSQL is not linked to this Railway service: "
+                f"{variable} points to localhost. {fix}"
             )
 
     @property

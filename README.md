@@ -25,17 +25,18 @@ Public booking codes look like `JZK-8F2KQ`. Database UUIDs are never shown to pa
 Railway fails on the repo root with Railpack because this is a monorepo. Use **Docker** and these services:
 
 ### 1. PostgreSQL
-Add the **PostgreSQL** plugin. Copy `DATABASE_URL` into the backend service variables.
+Add a **PostgreSQL** database service in the same project and environment as the backend.
 
 ### 2. Backend (API)
 - **Root Directory:** leave empty (repo root) — uses root `Dockerfile` + `railway.toml`
 - **Link PostgreSQL (required):**
   1. Backend service → **Variables** → **New Variable**
   2. **Add Reference** → select your **Postgres** service
-  3. Choose **`DATABASE_PRIVATE_URL`** (recommended) or `DATABASE_URL`
-  4. Save and **Redeploy**
+  3. Set the backend variable **`DATABASE_URL`** to the database service's **`DATABASE_URL`** reference. For a database service named `Postgres`, the reference is `${{Postgres.DATABASE_URL}}`.
+  4. Remove or correct any existing **`DATABASE_PRIVATE_URL`** override; the app gives it priority over `DATABASE_URL`.
+  5. Apply the staged changes and **Deploy**.
 
-  Without this, the app tries `localhost:5432` and crashes.
+  Without this, the app tries `localhost:5432` and crashes. The production Dockerfile does not copy your local `.env`; configure variables on Railway. In the single-variable editor, enter only the value, not a `DATABASE_URL=` assignment. An unresolved `${{...}}` reference means the referenced service/variable needs correcting on Railway.
 
 - **Other variables:**
   - `JWT_SECRET` — long random string

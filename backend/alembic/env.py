@@ -10,7 +10,8 @@ from app.db.base import Base
 from app.models import *  # noqa: F401,F403
 
 config = context.config
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# ConfigParser treats percent-encoded password characters as interpolation.
+config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -41,6 +42,7 @@ async def run_async_migrations() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args=get_settings().database_connect_args,
     )
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
