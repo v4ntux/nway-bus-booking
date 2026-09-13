@@ -6,9 +6,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import db_session, optional_user
+from app.api.deps import db_session, optional_user, require_roles
+from app.core.exceptions import NotFoundError, ForbiddenError
 from app.api.serializers import reservation_to_out, ticket_to_out
-from app.models import City, Route, User
+from app.models import City, Route, User, UserRole, Ticket, Reservation
 from app.schemas.booking import (
     BookingLookupIn,
     PaymentCreateIn,
@@ -25,6 +26,15 @@ from app.services.ticket import TicketService
 from app.services.trip import TripService
 
 router = APIRouter(tags=["public"])
+
+
+def protect_telegram_booking(reservation, user):
+    if reservation.telegram_chat_id is None:
+        return
+    if user and (user.id == reservation.user_id or user.role == UserRole.superadmin or
+                 (user.role in {UserRole.admin, UserRole.operator} and user.company_id == reservation.company_id)):
+        return
+    raise NotFoundError("RESERVATION_NOT_FOUND", "Booking not found")
 
 
 @router.get("/cities", response_model=list[CityOut], summary="List active cities")
@@ -100,15 +110,17 @@ async def create_reservation(
 
 
 @router.get("/reservations/{public_code}", response_model=ReservationOut)
-async def get_reservation(public_code: str, session: AsyncSession = Depends(db_session)):
+async def get_reservation(public_code: str, session: AsyncSession = Depends(db_session), user: User | None = Depends(optional_user)):
     reservation = await ReservationService(session).get_by_public_code(public_code)
+    protect_telegram_booking(reservation, user)
     return reservation_to_out(reservation)
 
 
 @router.post("/reservations/{public_code}/cancel", response_model=ReservationOut)
-async def cancel_reservation(public_code: str, session: AsyncSession = Depends(db_session)):
+async def cancel_reservation(public_code: str, session: AsyncSession = Depends(db_session), user: User | None = Depends(optional_user)):
     service = ReservationService(session)
     reservation = await service.get_by_public_code(public_code)
+    protect_telegram_booking(reservation, user)
     reservation = await service.cancel(reservation.id, actor_id=None)
     return reservation_to_out(reservation)
 
@@ -118,9 +130,11 @@ async def create_payment(
     public_code: str,
     body: PaymentCreateIn,
     session: AsyncSession = Depends(db_session),
+    user: User | None = Depends(optional_user),
 ):
     service = ReservationService(session)
     reservation = await service.get_by_public_code(public_code)
+    protect_telegram_booking(reservation, user)
     payment = await PaymentService(session).create_for_reservation(
         reservation.id, body.method, provider_name=body.provider
     )
@@ -140,26 +154,34 @@ async def mock_payment_fail(payment_id: UUID, session: AsyncSession = Depends(db
 
 
 @router.post("/bookings/lookup", response_model=ReservationOut)
-async def lookup_booking(body: BookingLookupIn, session: AsyncSession = Depends(db_session)):
+async def lookup_booking(body: BookingLookupIn, session: AsyncSession = Depends(db_session), user: User | None = Depends(optional_user)):
     reservation = await ReservationService(session).lookup(body.phone, body.public_code)
+    protect_telegram_booking(reservation, user)
     return reservation_to_out(reservation)
 
 
 @router.get("/tickets/{public_id}", response_model=TicketOut)
-async def get_ticket(public_id: str, session: AsyncSession = Depends(db_session)):
+async def get_ticket(public_id: str, session: AsyncSession = Depends(db_session), user: User | None = Depends(optional_user)):
     ticket = await TicketService(session).get_by_public_id(public_id)
+    protect_telegram_booking(ticket.reservation, user)
     return ticket_to_out(ticket)
 
 
 @router.post("/tickets/verify", response_model=TicketOut, summary="Verify QR token and mark ticket used")
-async def verify_ticket(body: TicketVerifyIn, session: AsyncSession = Depends(db_session)):
+async def verify_ticket(body: TicketVerifyIn, session: AsyncSession = Depends(db_session), actor: User = Depends(require_roles(UserRole.driver, UserRole.operator, UserRole.admin, UserRole.superadmin))):
+    reservation = await session.scalar(select(Reservation).join(Ticket, Ticket.reservation_id == Reservation.id).where(Ticket.qr_token == body.qr_token.strip()))
+    if not reservation:
+        raise NotFoundError("TICKET_NOT_FOUND", "Ticket not found")
+    if actor.role != UserRole.superadmin and actor.company_id != reservation.company_id:
+        raise ForbiddenError("FORBIDDEN", "Ticket belongs to another company")
     ticket = await TicketService(session).verify_qr(body.qr_token)
     return ticket_to_out(ticket)
 
 
 @router.get("/reservations/{public_code}/tickets", response_model=list[TicketOut])
-async def reservation_tickets(public_code: str, session: AsyncSession = Depends(db_session)):
+async def reservation_tickets(public_code: str, session: AsyncSession = Depends(db_session), user: User | None = Depends(optional_user)):
     service = ReservationService(session)
     reservation = await service.get_by_public_code(public_code)
+    protect_telegram_booking(reservation, user)
     tickets = await TicketService(session).list_for_reservation(reservation.id)
     return [ticket_to_out(t) for t in tickets]

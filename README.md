@@ -6,6 +6,8 @@ Foundation of a seat-booking platform: origin → destination → date → trip 
 
 ## Stack
 
+Telegram booking MVP setup, staff commands and operating limits: [docs/telegram-mvp.md](docs/telegram-mvp.md).
+
 - Backend: Python 3.12, FastAPI, SQLAlchemy 2 (async), PostgreSQL, Alembic, Pydantic v2, JWT
 - Frontend: React, TypeScript, Vite, React Router, TanStack Query, Tailwind CSS
 - Infra: Docker Compose (postgres, backend, frontend)

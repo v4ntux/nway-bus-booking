@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     # Telegram Mini App + bot (optional; bot CLI requires both)
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_WEBAPP_URL: str = "http://localhost:5173"
+    TELEGRAM_BOT_ENABLED: bool = False
+    TELEGRAM_WEBHOOK_SECRET: str = ""
+    TELEGRAM_SUPPORT: str = ""
+    TELEGRAM_DEMO_MODE: bool = True
+    TELEGRAM_BOOKING_CUTOFF_MINUTES: int = 30
+    ALLOW_MOCK_PAYMENTS: bool = False
 
     def _raw_database_url(self) -> str:
         """Prefer the optional private override, then DATABASE_URL."""

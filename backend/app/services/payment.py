@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import DomainError, NotFoundError
+from app.core.config import get_settings
 from app.models import Payment, PaymentMethod, PaymentStatus, Reservation, ReservationStatus
 from app.services.audit import write_audit
 from app.services.reservation import ReservationService
@@ -78,6 +79,8 @@ class PaymentService:
         self.reservations = ReservationService(session)
 
     def _provider(self, name: str) -> PaymentProvider:
+        if not get_settings().ALLOW_MOCK_PAYMENTS:
+            raise DomainError("ONLINE_PAYMENT_UNAVAILABLE", "Online payment is not connected. Pay at boarding.", 409)
         provider = payment_providers.get(name)
         if provider is None:
             raise DomainError("UNKNOWN_PROVIDER", f"Unknown payment provider: {name}")
@@ -150,6 +153,8 @@ class PaymentService:
         return await self.get(payment.id)
 
     async def mock_success(self, payment_id: UUID) -> Payment:
+        if not get_settings().ALLOW_MOCK_PAYMENTS:
+            raise DomainError("MOCK_PAYMENTS_DISABLED", "Test payments are disabled", 403)
         payment = await self.get(payment_id)
         if payment.status == PaymentStatus.paid:
             return payment
@@ -172,6 +177,8 @@ class PaymentService:
         return await self.get(payment.id)
 
     async def mock_fail(self, payment_id: UUID) -> Payment:
+        if not get_settings().ALLOW_MOCK_PAYMENTS:
+            raise DomainError("MOCK_PAYMENTS_DISABLED", "Test payments are disabled", 403)
         payment = await self.get(payment_id)
         reservation = await self.session.get(Reservation, payment.reservation_id)
         if reservation is None:
@@ -184,9 +191,15 @@ class PaymentService:
         return await self.get(payment.id)
 
     async def mark_paid_offline(self, reservation_id: UUID, actor_id: UUID | None) -> Payment:
-        reservation = await self.session.get(Reservation, reservation_id)
+        reservation = await self.session.scalar(select(Reservation).where(Reservation.id == reservation_id).with_for_update().execution_options(populate_existing=True))
         if reservation is None:
             raise NotFoundError("RESERVATION_NOT_FOUND", "Booking not found")
+        if reservation.status not in {ReservationStatus.pending, ReservationStatus.confirmed, ReservationStatus.awaiting_admin_approval}:
+            raise DomainError("PAYMENT_NOT_ALLOWED", "Booking cannot be paid in this status", 409)
+        if reservation.payment_status == PaymentStatus.paid:
+            existing = await self.session.scalar(select(Payment).where(Payment.reservation_id == reservation_id, Payment.status == PaymentStatus.paid))
+            if existing:
+                return existing
         payment = Payment(
             reservation_id=reservation_id,
             provider="offline",
@@ -209,7 +222,10 @@ class PaymentService:
             entity_id=payment.id,
         )
         await self.session.flush()
-        await self.reservations.confirm(reservation_id, actor_id=actor_id)
+        if reservation.status == ReservationStatus.confirmed:
+            await self.session.commit()
+        else:
+            await self.reservations.confirm(reservation_id, actor_id=actor_id)
         return await self.get(payment.id)
 
     async def get(self, payment_id: UUID) -> Payment:

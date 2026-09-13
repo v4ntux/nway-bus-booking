@@ -103,7 +103,17 @@ class ReservationService:
         contact_phone: str,
         passengers: list[PassengerInput],
         user_id: UUID | None,
+        booking_request_key: str | None = None,
+        telegram_chat_id: int | None = None,
     ) -> Reservation:
+        if booking_request_key:
+            existing = await self.session.scalar(
+                select(Reservation).where(Reservation.booking_request_key == booking_request_key)
+            )
+            if existing:
+                if existing.telegram_chat_id != telegram_chat_id:
+                    raise DomainError("BOOKING_OWNER_MISMATCH", "Booking belongs to another user", 403)
+                return await self.get_by_id(existing.id)
         if not seat_ids:
             raise DomainError("NO_SEATS", "At least one seat is required")
         if len(seat_ids) != len(set(seat_ids)):
@@ -124,6 +134,8 @@ class ReservationService:
             raise NotFoundError("TRIP_NOT_FOUND", "Trip not found")
         if trip.status not in BOOKABLE_TRIP_STATUSES:
             raise DomainError("TRIP_NOT_BOOKABLE", "This trip cannot be booked", status_code=409)
+        if trip.departure_datetime <= utcnow():
+            raise DomainError("TRIP_DEPARTED", "This trip has already departed", status_code=409)
 
         seats_result = await self.session.execute(
             select(Seat).where(Seat.id.in_(seat_ids)).with_for_update()
@@ -176,6 +188,8 @@ class ReservationService:
             currency=trip.currency,
             expires_at=expires_at,
             contact_phone=phone,
+            booking_request_key=booking_request_key,
+            telegram_chat_id=telegram_chat_id,
         )
         self.session.add(reservation)
         await self.session.flush()
@@ -440,7 +454,7 @@ class ReservationService:
 
     async def _lock(self, reservation_id: UUID) -> Reservation:
         result = await self.session.execute(
-            select(Reservation).where(Reservation.id == reservation_id).with_for_update()
+            select(Reservation).where(Reservation.id == reservation_id).with_for_update().execution_options(populate_existing=True)
         )
         reservation = result.scalar_one_or_none()
         if reservation is None:
@@ -497,6 +511,8 @@ class ReservationService:
         if user_id:
             user = await self.session.get(User, user_id)
             if user:
+                if user.status == UserStatus.blocked:
+                    raise DomainError("USER_BLOCKED", "Account is blocked", status_code=403)
                 return user
         result = await self.session.execute(select(User).where(User.phone == phone))
         user = result.scalar_one_or_none()

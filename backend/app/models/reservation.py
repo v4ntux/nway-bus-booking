@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -31,6 +31,8 @@ class Reservation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         PGUUID(as_uuid=True), ForeignKey("transport_companies.id"), nullable=False
     )
     public_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    booking_request_key: Mapped[str | None] = mapped_column(String(100), unique=True)
+    telegram_chat_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
     status: Mapped[ReservationStatus] = mapped_column(nullable=False, default=ReservationStatus.pending)
     payment_status: Mapped[PaymentStatus] = mapped_column(nullable=False, default=PaymentStatus.unpaid)
     payment_method: Mapped[PaymentMethod | None] = mapped_column()

@@ -19,6 +19,7 @@ class TicketService:
                 selectinload(Ticket.seat),
                 selectinload(Ticket.trip).selectinload(Trip.route).selectinload(Route.origin_city),
                 selectinload(Ticket.trip).selectinload(Trip.route).selectinload(Route.destination_city),
+                selectinload(Ticket.trip).selectinload(Trip.bus),
                 selectinload(Ticket.reservation),
             )
             .where(Ticket.public_id == public_id.strip().upper())
@@ -37,6 +38,8 @@ class TicketService:
                 selectinload(Ticket.trip),
             )
             .where(Ticket.qr_token == qr_token.strip())
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         ticket = result.scalar_one_or_none()
         if ticket is None:

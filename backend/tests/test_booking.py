@@ -171,7 +171,9 @@ async def test_large_booking_awaits_admin(world):
     assert reservation.status == ReservationStatus.awaiting_admin_approval
 
 
-async def test_payment_success_confirms_and_issues_tickets(world):
+async def test_payment_success_confirms_and_issues_tickets(world, monkeypatch):
+    from app.core.config import get_settings
+    monkeypatch.setattr(get_settings(), "ALLOW_MOCK_PAYMENTS", True)
     session = world["session"]
     trip = world["trip"]
     seat = world["seats"][0]
@@ -193,7 +195,9 @@ async def test_payment_success_confirms_and_issues_tickets(world):
     assert tickets[0].status == TicketStatus.valid
 
 
-async def test_failed_payment_does_not_confirm(world):
+async def test_failed_payment_does_not_confirm(world, monkeypatch):
+    from app.core.config import get_settings
+    monkeypatch.setattr(get_settings(), "ALLOW_MOCK_PAYMENTS", True)
     session = world["session"]
     trip = world["trip"]
     seat = world["seats"][0]

@@ -1,5 +1,7 @@
 from collections.abc import AsyncGenerator
 from datetime import timedelta
+import os
+import re
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -32,9 +34,12 @@ from app.models import (
 )
 from app.utils.time import utcnow
 
-TEST_DATABASE_URL = get_settings().DATABASE_URL
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", get_settings().database_url)
 if TEST_DATABASE_URL.rstrip("/").endswith("/nway"):
     TEST_DATABASE_URL = TEST_DATABASE_URL.rstrip("/")[:-5] + "/nway_test"
+test_database_name = make_url(TEST_DATABASE_URL).database or ""
+if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*_test", test_database_name):
+    raise RuntimeError("Tests require a dedicated database whose name ends in _test")
 
 
 async def _ensure_database(url: str) -> None:

@@ -1,5 +1,6 @@
 from datetime import date, datetime, time, timedelta
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,7 +36,11 @@ class TripService:
             .group_by(ReservationSeat.trip_id)
             .subquery()
         )
-        day_start = datetime.combine(travel_date, time.min).replace(tzinfo=utcnow().tzinfo)
+        origin = await self.session.get(City, origin_city_id)
+        dest = await self.session.get(City, destination_city_id)
+        if origin is None or dest is None:
+            raise NotFoundError("CITY_NOT_FOUND", "City not found")
+        day_start = datetime.combine(travel_date, time.min, tzinfo=ZoneInfo(origin.timezone))
         day_end = day_start + timedelta(days=1)
         stmt = (
             select(Trip, Bus, Route, City, held.c.held)
@@ -53,15 +58,12 @@ class TripService:
                 Route.destination_city_id == destination_city_id,
                 Trip.departure_datetime >= day_start,
                 Trip.departure_datetime < day_end,
+                Trip.departure_datetime > utcnow(),
                 Trip.status.in_(BOOKABLE_TRIP_STATUSES),
                 Route.active.is_(True),
             )
             .order_by(Trip.departure_datetime)
         )
-        dest = await self.session.get(City, destination_city_id)
-        origin = await self.session.get(City, origin_city_id)
-        if origin is None or dest is None:
-            raise NotFoundError("CITY_NOT_FOUND", "City not found")
         result = await self.session.execute(stmt)
         rows = []
         for trip, bus, route, _origin_city, held_count in result.all():

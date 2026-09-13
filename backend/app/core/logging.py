@@ -13,3 +13,6 @@ def setup_logging() -> None:
         stream=sys.stdout,
         force=True,
     )
+    # Telegram API URLs contain the bot token. Never log HTTP request URLs.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)

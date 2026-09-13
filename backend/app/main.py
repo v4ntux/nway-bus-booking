@@ -1,4 +1,5 @@
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +14,24 @@ from app.schemas.common import HealthResponse
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     setup_logging()
-    yield
+    settings = get_settings()
+    task = None
+    bot = None
+    if settings.TELEGRAM_BOT_ENABLED and settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_WEBHOOK_SECRET:
+        from app.db.session import SessionLocal, engine
+        from app.services.telegram_bot import TelegramBotClient
+        from app.services.telegram_worker import run_worker
+        bot = TelegramBotClient(settings.TELEGRAM_BOT_TOKEN)
+        task = asyncio.create_task(run_worker(bot, SessionLocal, engine))
+    try:
+        yield
+    finally:
+        if task:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        if bot:
+            await bot.close()
 
 
 def create_app() -> FastAPI:
@@ -44,6 +62,8 @@ def create_app() -> FastAPI:
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(public_router, prefix="/api/v1")
     app.include_router(admin_router, prefix="/api/v1")
+    from app.api.telegram import router as telegram_router
+    app.include_router(telegram_router)
     return app
 
 
