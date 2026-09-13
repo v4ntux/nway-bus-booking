@@ -29,8 +29,15 @@ Add the **PostgreSQL** plugin. Copy `DATABASE_URL` into the backend service vari
 
 ### 2. Backend (API)
 - **Root Directory:** leave empty (repo root) — uses root `Dockerfile` + `railway.toml`
-- **Variables:**
-  - `DATABASE_URL` — from Postgres plugin (auto-converted to asyncpg)
+- **Link PostgreSQL (required):**
+  1. Backend service → **Variables** → **New Variable**
+  2. **Add Reference** → select your **Postgres** service
+  3. Choose **`DATABASE_PRIVATE_URL`** (recommended) or `DATABASE_URL`
+  4. Save and **Redeploy**
+
+  Without this, the app tries `localhost:5432` and crashes.
+
+- **Other variables:**
   - `JWT_SECRET` — long random string
   - `CORS_ORIGINS` — your frontend public URL (comma-separated)
   - `DEBUG=false`
