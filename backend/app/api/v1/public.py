@@ -2,10 +2,14 @@ from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import get_settings
+from app.core.telegram_auth import optional_telegram_user
+from app.models.telegram import TelegramChat, TelegramDelivery
 from app.api.deps import db_session, optional_user, require_roles
 from app.core.exceptions import NotFoundError, ForbiddenError
 from app.api.serializers import reservation_to_out, ticket_to_out
@@ -28,10 +32,12 @@ from app.services.trip import TripService
 router = APIRouter(tags=["public"])
 
 
-def protect_telegram_booking(reservation, user):
+def protect_telegram_booking(reservation, user, telegram_id=None):
     if reservation.telegram_chat_id is None:
         return
-    if user and (user.id == reservation.user_id or user.role == UserRole.superadmin or
+    if telegram_id is not None and telegram_id == reservation.telegram_chat_id:
+        return
+    if user and (user.role == UserRole.superadmin or
                  (user.role in {UserRole.admin, UserRole.operator} and user.company_id == reservation.company_id)):
         return
     raise NotFoundError("RESERVATION_NOT_FOUND", "Booking not found")
@@ -98,29 +104,36 @@ async def create_reservation(
     body: ReservationCreateIn,
     session: AsyncSession = Depends(db_session),
     user: User | None = Depends(optional_user),
+    telegram_id: int | None = Depends(optional_telegram_user),
 ):
+    if telegram_id:
+        # Serialize submissions from one chat, including retries after a lost response.
+        await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": telegram_id})
+        await session.execute(insert(TelegramChat).values(chat_id=telegram_id, data={}).on_conflict_do_nothing())
     reservation = await ReservationService(session).create(
         trip_id=body.trip_id,
         seat_ids=body.seat_ids,
         contact_phone=body.contact_phone,
         passengers=[PassengerInput(**p.model_dump()) for p in body.passengers],
         user_id=user.id if user else None,
+        telegram_chat_id=telegram_id,
+        booking_request_key=f"miniapp:{telegram_id}:{body.request_key}" if telegram_id and body.request_key else None,
     )
     return reservation_to_out(reservation)
 
 
 @router.get("/reservations/{public_code}", response_model=ReservationOut)
-async def get_reservation(public_code: str, session: AsyncSession = Depends(db_session), user: User | None = Depends(optional_user)):
+async def get_reservation(public_code: str, session: AsyncSession = Depends(db_session), user: User | None = Depends(optional_user), telegram_id: int | None = Depends(optional_telegram_user)):
     reservation = await ReservationService(session).get_by_public_code(public_code)
-    protect_telegram_booking(reservation, user)
+    protect_telegram_booking(reservation, user, telegram_id)
     return reservation_to_out(reservation)
 
 
 @router.post("/reservations/{public_code}/cancel", response_model=ReservationOut)
-async def cancel_reservation(public_code: str, session: AsyncSession = Depends(db_session), user: User | None = Depends(optional_user)):
+async def cancel_reservation(public_code: str, session: AsyncSession = Depends(db_session), user: User | None = Depends(optional_user), telegram_id: int | None = Depends(optional_telegram_user)):
     service = ReservationService(session)
     reservation = await service.get_by_public_code(public_code)
-    protect_telegram_booking(reservation, user)
+    protect_telegram_booking(reservation, user, telegram_id)
     reservation = await service.cancel(reservation.id, actor_id=None)
     return reservation_to_out(reservation)
 
@@ -131,10 +144,11 @@ async def create_payment(
     body: PaymentCreateIn,
     session: AsyncSession = Depends(db_session),
     user: User | None = Depends(optional_user),
+    telegram_id: int | None = Depends(optional_telegram_user),
 ):
     service = ReservationService(session)
     reservation = await service.get_by_public_code(public_code)
-    protect_telegram_booking(reservation, user)
+    protect_telegram_booking(reservation, user, telegram_id)
     payment = await PaymentService(session).create_for_reservation(
         reservation.id, body.method, provider_name=body.provider
     )
@@ -154,16 +168,16 @@ async def mock_payment_fail(payment_id: UUID, session: AsyncSession = Depends(db
 
 
 @router.post("/bookings/lookup", response_model=ReservationOut)
-async def lookup_booking(body: BookingLookupIn, session: AsyncSession = Depends(db_session), user: User | None = Depends(optional_user)):
+async def lookup_booking(body: BookingLookupIn, session: AsyncSession = Depends(db_session), user: User | None = Depends(optional_user), telegram_id: int | None = Depends(optional_telegram_user)):
     reservation = await ReservationService(session).lookup(body.phone, body.public_code)
-    protect_telegram_booking(reservation, user)
+    protect_telegram_booking(reservation, user, telegram_id)
     return reservation_to_out(reservation)
 
 
 @router.get("/tickets/{public_id}", response_model=TicketOut)
-async def get_ticket(public_id: str, session: AsyncSession = Depends(db_session), user: User | None = Depends(optional_user)):
+async def get_ticket(public_id: str, session: AsyncSession = Depends(db_session), user: User | None = Depends(optional_user), telegram_id: int | None = Depends(optional_telegram_user)):
     ticket = await TicketService(session).get_by_public_id(public_id)
-    protect_telegram_booking(ticket.reservation, user)
+    protect_telegram_booking(ticket.reservation, user, telegram_id)
     return ticket_to_out(ticket)
 
 
@@ -179,9 +193,36 @@ async def verify_ticket(body: TicketVerifyIn, session: AsyncSession = Depends(db
 
 
 @router.get("/reservations/{public_code}/tickets", response_model=list[TicketOut])
-async def reservation_tickets(public_code: str, session: AsyncSession = Depends(db_session), user: User | None = Depends(optional_user)):
+async def reservation_tickets(public_code: str, session: AsyncSession = Depends(db_session), user: User | None = Depends(optional_user), telegram_id: int | None = Depends(optional_telegram_user)):
     service = ReservationService(session)
     reservation = await service.get_by_public_code(public_code)
-    protect_telegram_booking(reservation, user)
+    protect_telegram_booking(reservation, user, telegram_id)
     tickets = await TicketService(session).list_for_reservation(reservation.id)
     return [ticket_to_out(t) for t in tickets]
+
+
+@router.get("/app-config")
+async def app_config():
+    return {"demo_mode": get_settings().TELEGRAM_DEMO_MODE, "payment_methods": ["cash"]}
+
+
+@router.post("/reservations/{public_code}/confirm-cash", response_model=ReservationOut)
+async def confirm_cash(public_code: str, session: AsyncSession = Depends(db_session),
+                       user: User | None = Depends(optional_user),
+                       telegram_id: int | None = Depends(optional_telegram_user)):
+    service = ReservationService(session)
+    reservation = await service.get_by_public_code(public_code)
+    protect_telegram_booking(reservation, user, telegram_id)
+    return reservation_to_out(await service.confirm_cash(reservation.id))
+
+
+@router.get("/reservations/{public_code}/telegram-delivery")
+async def telegram_delivery(public_code: str, session: AsyncSession = Depends(db_session),
+                            telegram_id: int | None = Depends(optional_telegram_user)):
+    reservation = await ReservationService(session).get_by_public_code(public_code)
+    if telegram_id is None or reservation.telegram_chat_id != telegram_id:
+        raise NotFoundError("RESERVATION_NOT_FOUND", "Booking not found")
+    deliveries = list((await session.scalars(select(TelegramDelivery).join(Ticket).where(
+        Ticket.reservation_id == reservation.id))).all())
+    return {"total": len(deliveries), "sent": sum(d.sent_at is not None for d in deliveries),
+            "failed": any(d.attempts >= 8 and d.sent_at is None for d in deliveries)}

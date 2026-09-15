@@ -17,6 +17,7 @@ class PassengerIn(BaseModel):
 
 
 class ReservationCreateIn(BaseModel):
+    request_key: UUID | None = None
     trip_id: UUID
     seat_ids: list[UUID]
     contact_phone: str

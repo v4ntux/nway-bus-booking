@@ -5,6 +5,7 @@ from datetime import timedelta
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -34,6 +35,7 @@ from app.models import (
     UserStatus,
 )
 from app.services.audit import write_audit
+from app.models.telegram import TelegramDelivery
 from app.utils.codes import generate_booking_code, generate_qr_token, generate_ticket_public_id
 from app.utils.phone import normalize_phone
 from app.utils.time import utcnow
@@ -259,6 +261,13 @@ class ReservationService:
         self._transition(reservation, ReservationStatus.confirmed)
         reservation.expires_at = None
         await self._issue_tickets(reservation)
+        await self.session.flush()
+        if reservation.telegram_chat_id:
+            tickets = await self.session.scalars(select(Ticket).where(Ticket.reservation_id == reservation.id))
+            for ticket in tickets:
+                await self.session.execute(insert(TelegramDelivery).values(
+                    ticket_id=ticket.id, chat_id=reservation.telegram_chat_id, attempts=0,
+                ).on_conflict_do_nothing(index_elements=[TelegramDelivery.ticket_id]))
         await write_audit(
             self.session,
             actor_id=actor_id,
@@ -268,6 +277,22 @@ class ReservationService:
         )
         await self.session.commit()
         return await self.get_by_id(reservation.id)
+
+    async def confirm_cash(self, reservation_id: UUID) -> Reservation:
+        reservation = await self._lock(reservation_id)
+        if reservation.status == ReservationStatus.confirmed:
+            return await self.get_by_id(reservation.id)
+        if reservation.status not in {ReservationStatus.pending, ReservationStatus.awaiting_admin_approval}:
+            raise DomainError("INVALID_STATUS_TRANSITION", "Bu bronni tasdiqlab bo‘lmaydi.", 409)
+        trip = await self.session.get(Trip, reservation.trip_id)
+        if trip.departure_datetime <= utcnow() or (reservation.expires_at and reservation.expires_at <= utcnow()):
+            raise DomainError("RESERVATION_EXPIRED", "Bron muddati tugadi. Reysni qaytadan tanlang.", 409)
+        reservation.payment_method = PaymentMethod.cash
+        await self.session.flush()
+        if reservation.status == ReservationStatus.awaiting_admin_approval:
+            await self.session.commit()
+            return await self.get_by_id(reservation.id)
+        return await self.confirm(reservation.id, actor_id=None)
 
     async def cancel(self, reservation_id: UUID, actor_id: UUID | None) -> Reservation:
         reservation = await self._lock(reservation_id)

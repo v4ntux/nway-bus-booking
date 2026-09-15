@@ -17,7 +17,7 @@ async def lifespan(_app: FastAPI):
     settings = get_settings()
     task = None
     bot = None
-    if settings.TELEGRAM_BOT_ENABLED and settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_WEBHOOK_SECRET:
+    if settings.telegram_ready:
         from app.db.session import SessionLocal, engine
         from app.services.telegram_bot import TelegramBotClient
         from app.services.telegram_worker import run_worker

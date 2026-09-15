@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowsDownUp, CalendarBlank, MagnifyingGlass } from "@phosphor-icons/react";
+import { useTelegram } from "../telegram/TelegramProvider";
 import { catalogApi } from "../api/catalog";
 import { CityPicker } from "../components/CityPicker";
 import { DatePicker } from "../components/DatePicker";
@@ -21,6 +22,7 @@ function shortDate(iso: string) {
 
 export function HomePage() {
   const navigate = useNavigate();
+  const { isTelegram, user } = useTelegram();
   const citiesQuery = useQuery({ queryKey: ["cities"], queryFn: catalogApi.cities });
   const [origin, setOrigin] = useState("");
   const [dest, setDest] = useState("");
@@ -53,11 +55,12 @@ export function HomePage() {
   return (
     <div className="flex flex-col gap-8 sm:gap-10">
       <header className="flex max-w-[34ch] flex-col gap-3 animate-fade-rise">
+        <p className="text-sm font-medium text-accent-strong">{isTelegram ? `👋 Salom${user?.first_name ? `, ${user.first_name}` : ""}!` : "🚌 NWay bilan yo‘lga chiqing"}</p>
         <h1 className="text-[36px] font-semibold leading-[1.08] tracking-[-0.03em] text-ink sm:text-[50px]">
           Qayerga boramiz?
         </h1>
         <p className="text-[16px] leading-relaxed text-muted sm:text-[17px]">
-          Reysni tanlang, avtobusda joyingizni belgilang va Payme, Click yoki karta orqali to‘lang.
+          Yo‘nalishni tanlang, qulay joyni band qiling. 🎫 Chiptangiz Telegramda, to‘lov esa safar kuni.
         </p>
       </header>
 

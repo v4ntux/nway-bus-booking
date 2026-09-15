@@ -3,8 +3,10 @@ import asyncio
 import logging
 from datetime import timedelta
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, func, select, text
+from sqlalchemy.dialects.postgresql import insert
 
+from app.core.config import get_settings
 from app.models.telegram import TelegramDelivery, TelegramUpdate
 from app.services.reservation import ReservationService
 from app.services.telegram_bot import TelegramAPIError
@@ -68,6 +70,36 @@ async def deliver_one(bot, sessions):
         return True
 
 
+async def poll_updates(bot, sessions):
+    """Long-poll getUpdates into the same durable inbox the webhook writes to.
+
+    Lets the bot run without a public HTTPS backend. Telegram refuses getUpdates
+    while a webhook is registered, so drop it first. Updates are committed before
+    the offset advances, keeping delivery at-least-once.
+    """
+    async with sessions() as session:
+        offset = ((await session.scalar(select(func.max(TelegramUpdate.update_id)))) or 0) + 1
+    await bot._call("deleteWebhook")
+    logger.info("telegram_polling_started offset=%s", offset)
+    while True:
+        try:
+            updates = await bot._call("getUpdates", offset=offset, timeout=25,
+                                      allowed_updates=["message", "callback_query"])
+        except TelegramAPIError as error:
+            logger.warning("telegram_poll_error code=%s", error.code)
+            await asyncio.sleep(max(error.retry_after, 3))
+            continue
+        if not updates:
+            continue
+        async with sessions() as session:
+            for update in updates:
+                await session.execute(insert(TelegramUpdate).values(
+                    update_id=update["update_id"], payload=update, attempts=0,
+                ).on_conflict_do_nothing(index_elements=[TelegramUpdate.update_id]))
+            await session.commit()
+        offset = max(update["update_id"] for update in updates) + 1
+
+
 async def run_worker(bot, sessions, engine):
     configured = False
     while True:
@@ -82,10 +114,17 @@ async def run_worker(bot, sessions, engine):
                 if not acquired:
                     await asyncio.sleep(3)
                     continue
+                poller = None
                 try:
                     last_maintenance = utcnow() - timedelta(minutes=1)
                     logger.info("telegram_worker_started")
+                    # Only the lock holder may poll; two getUpdates readers steal
+                    # each other's updates.
+                    if get_settings().telegram_polling:
+                        poller = asyncio.create_task(poll_updates(bot, sessions))
                     while True:
+                        if poller and poller.done():
+                            await poller  # Re-raise so the outer handler restarts polling.
                         await lock_connection.execute(text("SELECT 1"))
                         await lock_connection.commit()
                         worked = await process_one(bot, sessions)
@@ -98,6 +137,11 @@ async def run_worker(bot, sessions, engine):
                             last_maintenance = utcnow()
                         await asyncio.sleep(0.05 if worked or delivered else 1)
                 finally:
+                    if poller:
+                        poller.cancel()
+                        # gather absorbs the child's cancellation but still lets an
+                        # outer cancellation of this worker propagate.
+                        await asyncio.gather(poller, return_exceptions=True)
                     try:
                         if not lock_connection.invalidated:
                             await lock_connection.rollback()

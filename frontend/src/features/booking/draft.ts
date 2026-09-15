@@ -1,6 +1,7 @@
 import type { PassengerIn } from "../../types/api";
 
 export type DraftBooking = {
+  requestKey?: string;
   tripId: string;
   seatIds: string[];
   seatNumbers: string[];

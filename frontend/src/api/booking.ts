@@ -3,6 +3,7 @@ import type { PassengerIn, Payment, Reservation, Ticket } from "../types/api";
 
 export const bookingApi = {
   createReservation: (body: {
+    request_key?: string;
     trip_id: string;
     seat_ids: string[];
     contact_phone: string;
@@ -13,6 +14,8 @@ export const bookingApi = {
       body: JSON.stringify(body),
     }),
   getReservation: (code: string) => apiRequest<Reservation>(`/api/v1/reservations/${code}`),
+  confirmCash: (code: string) => apiRequest<Reservation>(`/api/v1/reservations/${code}/confirm-cash`, { method: "POST" }),
+  delivery: (code: string) => apiRequest<{ total: number; sent: number; failed: boolean }>(`/api/v1/reservations/${code}/telegram-delivery`),
   cancel: (code: string) =>
     apiRequest<Reservation>(`/api/v1/reservations/${code}/cancel`, { method: "POST" }),
   createPayment: (code: string, method: string, provider = "mock") =>

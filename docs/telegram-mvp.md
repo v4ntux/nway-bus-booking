@@ -12,6 +12,29 @@ Example ticket (sample data, not valid for travel):
 
 ![NWay demo ticket](assets/ticket-demo.png)
 
+## Local development
+
+Webhooks need a public HTTPS backend, which a laptop does not have. Set `TELEGRAM_MODE=polling`
+and the worker long-polls `getUpdates` into the same durable inbox the webhook writes to:
+
+```ini
+TELEGRAM_BOT_ENABLED=true
+TELEGRAM_BOT_TOKEN=<BotFather token>
+TELEGRAM_MODE=polling
+```
+
+Polling drops any registered webhook on start, so a bot token cannot serve both at once — use a
+separate test bot if production is live. `TELEGRAM_WEBHOOK_SECRET` is not needed in this mode.
+
+The Mini App itself still requires HTTPS; Telegram refuses to open `http://` URLs. Point a tunnel
+at the **frontend** (port 5173) — it proxies `/api` to the backend, so one tunnel covers both — and
+put the resulting URL in `TELEGRAM_WEBAPP_URL` and `CORS_ORIGINS`. Left as `http://`, the bot still
+starts but every "open the app" button silently disappears; the log then says
+`telegram_webapp_disabled`.
+
+The demo schedule only covers ten days from when it was seeded. Run
+`python -m app.cli refresh-trips` (idempotent) when searches come back empty.
+
 ## Deployment
 
 The existing API service also runs the Telegram worker; no extra bot service is needed. The Docker image includes the Cyrillic font and PNG/QR libraries. Startup runs migration `0003_telegram_mvp` before the worker starts.
@@ -22,7 +45,9 @@ Backend Railway variables:
 DATABASE_URL=${{Postgres.DATABASE_URL}}
 TELEGRAM_BOT_ENABLED=true
 TELEGRAM_BOT_TOKEN=<BotFather token>
+TELEGRAM_MODE=webhook
 TELEGRAM_WEBHOOK_SECRET=<random 32+ character URL-safe secret>
+TELEGRAM_WEBAPP_URL=https://<your frontend service>.up.railway.app
 TELEGRAM_DEMO_MODE=true
 ALLOW_MOCK_PAYMENTS=false
 DEBUG=false

@@ -1,4 +1,8 @@
-import { Link, Outlet, useLocation, useMatch } from "react-router-dom";
+import { useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "../api/client";
+import WebApp from "@twa-dev/sdk";
+import { Link, Outlet, useLocation, useMatch, useNavigate } from "react-router-dom";
 import { MagnifyingGlass, X } from "@phosphor-icons/react";
 import { BrandMark } from "./BrandMark";
 import { Stepper } from "./Stepper";
@@ -31,7 +35,23 @@ export function Atmosphere() {
 
 export function PassengerLayout() {
   const step = useBookingStep();
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const config = useQuery({ queryKey: ["app-config"], queryFn: () => apiRequest<{ demo_mode: boolean }>("/api/v1/app-config"), staleTime: 60_000 });
   const { isTelegram, user, close } = useTelegram();
+
+  useEffect(() => {
+    if (!isTelegram) return;
+    const goBack = () => {
+      if (window.history.state?.idx > 0) navigate(-1);
+      else navigate("/");
+    };
+    if (pathname === "/" || pathname === "/book") WebApp.BackButton.hide();
+    else WebApp.BackButton.show();
+    WebApp.BackButton.onClick(goBack);
+    window.scrollTo(0, 0);
+    return () => { WebApp.BackButton.offClick(goBack); WebApp.BackButton.hide(); };
+  }, [isTelegram, pathname, navigate]);
 
   return (
     <div className="relative flex min-h-[100dvh] flex-col">
@@ -56,8 +76,9 @@ export function PassengerLayout() {
                 )}
                 <Link
                   to="/lookup"
+                  aria-label="Chiptani topish"
                   viewTransition
-                  className="glass inline-flex h-10 items-center gap-2 rounded-control px-3.5 text-[14px] font-medium text-ink no-underline transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-accent/40"
+                  className="glass inline-flex h-11 items-center gap-2 rounded-control px-3.5 text-[14px] font-medium text-ink no-underline transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-accent/40"
                 >
                   <MagnifyingGlass size={16} weight="bold" />
                   <span className="hidden sm:inline">Chiptani topish</span>
@@ -67,7 +88,7 @@ export function PassengerLayout() {
                     type="button"
                     onClick={close}
                     aria-label="Yopish"
-                    className="glass flex h-10 w-10 items-center justify-center rounded-full text-muted transition-all duration-300 hover:text-ink"
+                    className="glass flex h-11 w-11 items-center justify-center rounded-full text-muted transition-all duration-300 hover:text-ink"
                   >
                     <X size={18} weight="bold" />
                   </button>
@@ -88,16 +109,20 @@ export function PassengerLayout() {
         </header>
 
         <main id="main" className="mx-auto w-full max-w-4xl flex-1 px-4 py-6 sm:py-10">
+          {config.data?.demo_mode && <div role="note" className="mb-5 rounded-panel border border-accent/30 bg-accent-soft px-4 py-3 text-sm leading-relaxed text-accent-strong">
+            🧪 <strong>Sinov rejimi.</strong> Reyslar namuna uchun. Pul yechilmaydi, chipta haqiqiy safar uchun yaroqsiz.
+          </div>}
           <Outlet />
         </main>
 
         {!isTelegram && (
           <footer className="mt-8 border-t border-hairline/70">
             <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-3 px-4 py-6 text-[13px] text-muted">
-              <p>Shaharlar aro avtobuslar. To‘lov: Payme, Click, Uzcard/Humo.</p>
+              <p>🚌 Shaharlararo avtobuslar. 💵 To‘lov avtobusga chiqishda.</p>
               <div className="flex items-center gap-4">
                 <Link
                   to="/lookup"
+                  aria-label="Chiptani topish"
                   viewTransition
                   className="text-ink no-underline underline-offset-4 transition-opacity duration-200 hover:opacity-70 hover:underline"
                 >

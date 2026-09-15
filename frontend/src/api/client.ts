@@ -35,6 +35,8 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     headers.set("Content-Type", "application/json");
   }
   const token = getToken();
+  const telegramData = window.Telegram?.WebApp?.initData;
+  if (telegramData) headers.set("X-Telegram-Init-Data", telegramData);
   if (token && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${token}`);
   }

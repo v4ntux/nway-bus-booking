@@ -77,14 +77,95 @@ BUSES = [
 ]
 
 
+SCHEDULE_DAYS = 10
+
+
+async def refresh_trip_schedule(
+    session: AsyncSession, *, company: TransportCompany | None = None
+) -> int:
+    """Top up the demo schedule so the next SCHEDULE_DAYS days always have trips.
+
+    Idempotent: a departure already on a route is never duplicated, so this is safe
+    to run on every boot. Returns the number of trips added.
+    """
+    settings = get_settings()
+    if company is None:
+        company = (
+            await session.execute(select(TransportCompany).where(TransportCompany.name == "NWay Trans"))
+        ).scalar_one_or_none()
+        if company is None:
+            return 0
+
+    buses = list(
+        (
+            await session.scalars(
+                select(Bus).where(Bus.company_id == company.id, Bus.active.is_(True)).order_by(Bus.registration_number)
+            )
+        ).all()
+    )
+    if not buses:
+        return 0
+
+    cities = {city.name: city for city in (await session.scalars(select(City))).all()}
+    routes = {
+        (route.origin_city_id, route.destination_city_id): route
+        for route in (await session.scalars(select(Route).where(Route.company_id == company.id))).all()
+    }
+
+    now = utcnow()
+    today_local = now.astimezone(TASHKENT).date()
+    bus_cursor = 0
+    added = 0
+    for origin_name, dest_name, minutes, _km, departures, price_som in ROUTES:
+        origin, destination = cities.get(origin_name), cities.get(dest_name)
+        if not origin or not destination:
+            continue
+        route = routes.get((origin.id, destination.id))
+        if route is None:
+            continue
+        taken = set(
+            (await session.scalars(select(Trip.departure_datetime).where(Trip.route_id == route.id))).all()
+        )
+        for day_offset in range(SCHEDULE_DAYS):
+            day = today_local + timedelta(days=day_offset)
+            for hour, minute in departures:
+                local = datetime(day.year, day.month, day.day, hour, minute, tzinfo=TASHKENT)
+                departure = local.astimezone(timezone.utc)
+                if departure <= now or departure in taken:
+                    continue
+                bus = buses[bus_cursor % len(buses)]
+                bus_cursor += 1
+                session.add(
+                    Trip(
+                        route_id=route.id,
+                        bus_id=bus.id,
+                        company_id=company.id,
+                        departure_datetime=departure,
+                        estimated_arrival_datetime=departure + timedelta(minutes=minutes),
+                        status=TripStatus.scheduled,
+                        base_price_minor=price_som * 100,
+                        currency=settings.DEFAULT_CURRENCY,
+                        boarding_location=f"{origin_name} avtovokzali",
+                        destination_location=f"{dest_name} avtovokzali",
+                    )
+                )
+                taken.add(departure)
+                added += 1
+
+    await session.commit()
+    return added
+
+
 async def seed_database(session: AsyncSession) -> None:
     settings = get_settings()
     existing = (
         await session.execute(select(TransportCompany).where(TransportCompany.name == "NWay Trans"))
     ).scalar_one_or_none()
     if existing:
-        logger.info("seed_skip reason=already_present")
-        await session.commit()
+        # Everything else is already in place, but the schedule is a rolling
+        # window — without this the demo runs out of trips ten days after seeding.
+        added = await refresh_trip_schedule(session, company=existing)
+        logger.info("seed_skip reason=already_present trips_added=%s", added)
         return
 
     company = TransportCompany(name="NWay Trans", phone="+998712000000", active=True)

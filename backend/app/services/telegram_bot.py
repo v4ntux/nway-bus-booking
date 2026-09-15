@@ -8,6 +8,7 @@ import logging
 import secrets
 from datetime import date, timedelta
 from uuid import UUID
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -27,11 +28,11 @@ from app.utils.time import utcnow
 
 logger = logging.getLogger(__name__)
 COMMANDS = [
-    {"command": "start", "description": "Главное меню"},
-    {"command": "book", "description": "Найти рейс и выбрать место"},
-    {"command": "tickets", "description": "Мои билеты"},
-    {"command": "help", "description": "Помощь и правила поездки"},
-    {"command": "admin", "description": "Пульт сотрудника"},
+    {"command": "start", "description": "Bosh menyu"},
+    {"command": "book", "description": "Reys va joy tanlash"},
+    {"command": "tickets", "description": "Chiptalarim"},
+    {"command": "help", "description": "Yordam va safar qoidalari"},
+    {"command": "admin", "description": "Xodimlar paneli"},
 ]
 
 
@@ -48,7 +49,7 @@ def keyboard(*rows):
 def money(minor, currency="UZS"):
     amount, cents = divmod(minor, 100)
     value = f"{amount:,}".replace(",", " ") + (f",{cents:02d}" if cents else "")
-    return f"{value} {'сум' if currency == 'UZS' else currency}"
+    return f"{value} {'so‘m' if currency == 'UZS' else currency}"
 
 
 def esc(value):
@@ -64,6 +65,16 @@ class TelegramAPIError(Exception):
 class TelegramBotClient:
     def __init__(self, token, webapp_url="", *, client=None):
         self.token = token
+        candidate = (webapp_url or get_settings().TELEGRAM_WEBAPP_URL).rstrip("/")
+        parts = urlsplit(candidate)
+        self.webapp_url = candidate if parts.scheme == "https" and parts.netloc else ""
+        if candidate and not self.webapp_url:
+            # Telegram only opens Mini Apps over HTTPS; without it the bot silently
+            # loses every web_app button, so say so loudly.
+            logger.warning(
+                "telegram_webapp_disabled reason=not_https url_scheme=%s — "
+                "set TELEGRAM_WEBAPP_URL to an HTTPS origin (tunnel or deployed frontend)",
+                parts.scheme or "none")
         self.client = client or httpx.AsyncClient(timeout=httpx.Timeout(40, connect=10))
 
     async def close(self):
@@ -89,12 +100,14 @@ class TelegramBotClient:
         identity = await self._call("getMe")
         self.username = identity["username"]
         await self._call("setMyCommands", commands=COMMANDS)
-        await self._call("setChatMenuButton", menu_button={"type": "commands"})
-        await self._call("setMyShortDescription", short_description="NWay — автобусные поездки. Выбор места, бронирование и билет с QR прямо в Telegram.")
+        await self._call("setChatMenuButton", menu_button=(
+            {"type": "web_app", "text": "📱 NWay", "web_app": {"url": self.webapp_url}}
+            if self.webapp_url else {"type": "commands"}))
+        await self._call("setMyShortDescription", short_description="🚌 NWay — yo‘lingizni tanlang. Joy band qiling va QR-chiptani Telegramda oling.")
         logger.info("telegram_bot_configured")
 
     async def screen(self, chat_id, text, markup=None, message_id=None):
-        payload = dict(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=markup or keyboard([button("⌂ Главное меню", "home")]))
+        payload = dict(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=markup or keyboard([button("⌂ Bosh menyu", "home")]))
         if message_id:
             try:
                 return await self._call("editMessageText", message_id=message_id, **payload)
@@ -107,20 +120,38 @@ class TelegramBotClient:
         chat.data = {**chat.data, **data}
         await session.commit()
 
+    def web_button(self, label, path=""):
+        return {"text": label, "web_app": {"url": self.webapp_url + path}}
+
+    async def open_app(self, session, chat, message_id=None):
+        if not getattr(self, "webapp_url", ""):
+            return await self.origins(session, chat, message_id)
+        await self.screen(chat.chat_id,
+            "🎫 <b>Qayerga boramiz?</b>\n\nYo‘nalish → sana → qulay joy → tasdiqlash.\n"
+            "Chipta rasmini shu chatga yuboramiz. 💌\n\n💵 To‘lov — avtobusga chiqishda.",
+            keyboard([self.web_button("🎫 Chipta sotib olish", "/book")],
+                     [self.web_button("📱 Ilovani ochish")],
+                     [button("🏠 Bosh menyu", "home")]), message_id)
+
     async def home(self, session, chat, message_id=None):
         chat.data = {}
         await session.commit()
-        demo = "\n\n🧪 <b>Демо-MVP.</b> Рейсы тестовые, деньги не списываются." if get_settings().TELEGRAM_DEMO_MODE else ""
+        demo = "\n\n🧪 <b>Sinov rejimi.</b> Reyslar namuna uchun. Pul yechilmaydi, chipta haqiqiy safar uchun yaroqsiz." if get_settings().TELEGRAM_DEMO_MODE else ""
+        rows = ([self.web_button("🎫 Chipta sotib olish", "/book")],
+                [self.web_button("📱 Ilovani ochish")]) if getattr(self, "webapp_url", "") else ([button("🎫 Reys topish", "book")],)
         await self.screen(chat.chat_id,
-            "🚌 <b>NWay</b>\n<i>Ваш путь. Ваше место.</i>\n\nВыберите маршрут и удобное место. После подтверждения билет с QR придёт сюда — сохраните его для посадки.\n\n💵 Оплата при посадке · 🎫 Билет в Telegram" + demo,
-            keyboard([button("🎫 Найти рейс", "book")], [button("🧾 Мои билеты", "mine"), button("💬 Помощь", "help")]), message_id)
+            "🚌 <b>NWay — yo‘lingiz shu yerdan boshlanadi!</b>\n\n"
+            "Assalomu alaykum! 👋\nQulay joy, oson bron va barcha chiptalaringiz bir joyda.\n\n"
+            "🗺 Yo‘nalish va sanani tanlang\n💺 Avtobusdan joyingizni belgilang\n🎫 QR-chiptani rasm ko‘rinishida oling\n\n"
+            "💵 To‘lov — avtobusga chiqishda" + demo,
+            keyboard(*rows, [button("🧾 Chiptalarim", "mine"), button("💬 Yordam", "help")]), message_id)
 
     async def origins(self, session, chat, message_id=None):
         cities = list((await session.scalars(select(City).join(Route, Route.origin_city_id == City.id).where(City.active.is_(True), Route.active.is_(True)).distinct().order_by(City.name))).all())
         chat.data = {"stage": "origin", "nonce": secrets.token_hex(6)}
         await session.commit()
         buttons = [button(c.name, f"o:{c.id}") for c in cities]
-        await self.screen(chat.chat_id, "<b>1 / 5 · Маршрут</b>\n\nОткуда поедем?", keyboard(*[buttons[i:i+2] for i in range(0, len(buttons), 2)], [button("⌂ Главное меню", "home")]), message_id)
+        await self.screen(chat.chat_id, "<b>1 / 5 · Маршрут</b>\n\nОткуда поедем?", keyboard(*[buttons[i:i+2] for i in range(0, len(buttons), 2)], [button("⌂ Bosh menyu", "home")]), message_id)
 
     async def destinations(self, session, chat, origin_id, message_id=None):
         origin = await session.get(City, UUID(origin_id))
@@ -237,8 +268,8 @@ class TelegramBotClient:
         local = trip.departure_datetime.astimezone(ZoneInfo(trip.route.origin_city.timezone))
         demo = "\n\n🧪 Это тестовый рейс. Билет не даёт права проезда." if get_settings().TELEGRAM_DEMO_MODE else ""
         text = (f"<b>Проверьте заказ</b>\n\n🚌 {esc(trip.route.origin_city.name)} → {esc(trip.route.destination_city.name)}"
-                f"\n📅 {local:%d.%m.%Y} · {local:%H:%M}\n💺 Место {esc(seat.seat_number)}\n👤 {esc(name)}\n📱 {esc(chat.phone)}"
-                f"\n\n<b>Итого: {money(trip.base_price_minor, trip.currency)}</b>\n💵 Оплата при посадке. Сейчас платить не нужно."
+                f"\n📅 {local:%d.%m.%Y} · {local:%H:%M}\n💺 Joy {esc(seat.seat_number)}\n👤 {esc(name)}\n📱 {esc(chat.phone)}"
+                f"\n\n<b>Итого: {money(trip.base_price_minor, trip.currency)}</b>\n💵 To‘lov chiqishda. Сейчас платить не нужно."
                 "\n\nПосле подтверждения место будет забронировано, а билет придёт картинкой." + demo)
         await self.screen(chat.chat_id, text, keyboard([button("✅ Подтвердить и получить билет", f"ok:{chat.data['nonce']}")], [button("✏️ Пассажир", "passenger"), button("← Место", f"tr:{trip.id}")], [button("Отменить оформление", "home")]), message_id)
 
@@ -256,7 +287,7 @@ class TelegramBotClient:
                 passengers=[PassengerInput(seat_id=UUID(chat.data["seat"]), first_name=chat.data["passenger"])],
                 user_id=chat.user_id, booking_request_key=key, telegram_chat_id=chat.chat_id)
         if reservation.telegram_chat_id != chat.chat_id:
-            raise DomainError("BOOKING_OWNER_MISMATCH", "Заказ не найден", 403)
+            raise DomainError("BOOKING_OWNER_MISMATCH", "Bron topilmadi", 403)
         if reservation.status == ReservationStatus.pending:
             reservation.payment_method = PaymentMethod.cash
             reservation = await ReservationService(session).confirm(reservation.id, actor_id=chat.user_id)
@@ -264,7 +295,7 @@ class TelegramBotClient:
             raise DomainError("BOOKING_CLOSED", "Этот заказ уже закрыт. Создайте новый")
         await self.queue_tickets(session, reservation, chat.chat_id)
         await self.save(session, chat, stage="complete", reservation_code=reservation.public_code)
-        await self.screen(chat.chat_id, f"✅ <b>Готово! Место забронировано.</b>\n\nЗаказ <code>{esc(reservation.public_code)}</code>\nБилет отправляется следующим сообщением. Сохраните картинку.\n\n💵 Оплата при посадке — билет не означает, что поездка оплачена.", keyboard([button("🧾 Мои билеты", "mine")], [button("🎫 Ещё один билет", "book")]), message_id)
+        await self.screen(chat.chat_id, f"✅ <b>Готово! Место забронировано.</b>\n\nЗаказ <code>{esc(reservation.public_code)}</code>\nБилет отправляется следующим сообщением. Сохраните картинку.\n\n💵 To‘lov chiqishda — билет не означает, что поездка оплачена.", keyboard([button("🧾 Chiptalarim", "mine")], [button("🎫 Ещё один билет", "book")]), message_id)
 
     async def queue_tickets(self, session, reservation, chat_id, resend=False):
         tickets = await TicketService(session).list_for_reservation(reservation.id)
@@ -285,29 +316,29 @@ class TelegramBotClient:
         for reservation in reservations:
             mark = "✅" if reservation.status == ReservationStatus.confirmed else "✖️" if reservation.status in {ReservationStatus.cancelled, ReservationStatus.expired} else "⏳"
             rows.append([button(f"{mark} {reservation.public_code} · {money(reservation.total_amount_minor, reservation.currency)}", f"view:{reservation.public_code}")])
-        text = "<b>🧾 Мои билеты</b>\n\nВыберите заказ. Здесь можно сохранить билет повторно или отменить неоплаченную поездку." if reservations else "<b>🧾 Мои билеты</b>\n\nЗдесь пока пусто. Найдите рейс — первый билет появится после подтверждения заказа."
-        rows.append([button("🎫 Найти рейс", "book"), button("⌂ Меню", "home")])
+        text = "<b>🧾 Chiptalarim</b>\n\nBronni tanlang. Chiptani qayta oling yoki to‘lanmagan safarni bekor qiling." if reservations else "<b>🧾 Chiptalarim</b>\n\nHozircha chipta yo‘q. Reys tanlang — tasdiqlangan chiptangiz shu yerda paydo bo‘ladi."
+        rows.append([button("🎫 Reys topish", "book"), button("🏠 Bosh menyu", "home")])
         await self.screen(chat.chat_id, text, keyboard(*rows), message_id)
 
     async def owned_booking(self, session, chat, code):
         reservation = await session.scalar(select(Reservation).where(Reservation.public_code == code, Reservation.telegram_chat_id == chat.chat_id))
         if not reservation:
-            raise DomainError("RESERVATION_NOT_FOUND", "Заказ не найден")
+            raise DomainError("RESERVATION_NOT_FOUND", "Bron topilmadi")
         return await ReservationService(session).get_by_id(reservation.id)
 
     async def show_booking(self, session, chat, code, message_id=None):
         reservation = await self.owned_booking(session, chat, code)
         trip = await TripService(session).get(reservation.trip_id)
-        statuses = {"confirmed": "Подтверждён", "cancelled": "Отменён", "expired": "Истёк", "completed": "Поездка завершена", "no_show": "Неявка"}
-        status = statuses.get(reservation.status.value, "Ожидает подтверждения")
+        statuses = {"confirmed": "Tasdiqlangan", "cancelled": "Bekor qilingan", "expired": "Muddati tugagan", "completed": "Safar yakunlangan", "no_show": "Kelmadi"}
+        status = statuses.get(reservation.status.value, "Tasdiq kutilmoqda")
         local = trip.departure_datetime.astimezone(ZoneInfo(trip.route.origin_city.timezone))
-        text = f"<b>Заказ {esc(code)}</b>\n\n{esc(trip.route.origin_city.name)} → {esc(trip.route.destination_city.name)}\n📅 {local:%d.%m.%Y, %H:%M}\n💺 Место {esc(', '.join(s.seat.seat_number for s in reservation.seats))}\n\nСтатус: <b>{status}</b>\n{money(reservation.total_amount_minor, reservation.currency)} · {'Оплачено' if reservation.payment_status == PaymentStatus.paid else 'Оплата при посадке'}"
+        text = f"<b>Bron {esc(code)}</b>\n\n{esc(trip.route.origin_city.name)} → {esc(trip.route.destination_city.name)}\n📅 {local:%d.%m.%Y, %H:%M}\n💺 Joy {esc(', '.join(s.seat.seat_number for s in reservation.seats))}\n\nHolati: <b>{status}</b>\n{money(reservation.total_amount_minor, reservation.currency)} · {'To‘langan' if reservation.payment_status == PaymentStatus.paid else 'To‘lov chiqishda'}"
         rows = []
         if reservation.status == ReservationStatus.confirmed:
-            rows.append([button("🖼 Отправить билет картинкой", f"image:{code}")])
+            rows.append([button("🖼 Chiptani rasm qilib olish", f"image:{code}")])
             if trip.departure_datetime > utcnow() and reservation.payment_status == PaymentStatus.unpaid:
-                rows.append([button("Отменить поездку", f"cancelask:{code}")])
-        rows.append([button("← Все билеты", "mine"), button("⌂ Меню", "home")])
+                rows.append([button("Safarni bekor qilish", f"cancelask:{code}")])
+        rows.append([button("← Barcha chiptalar", "mine"), button("🏠 Bosh menyu", "home")])
         await self.screen(chat.chat_id, text, keyboard(*rows), message_id)
 
     async def handle_update(self, update, session):
@@ -340,10 +371,10 @@ class TelegramBotClient:
                 if argument.startswith("check_"):
                     from app.services.telegram_admin import check
                     return await check(self, session, chat, argument[6:])
-                await self._call("sendMessage", chat_id=chat_id, text="Добро пожаловать в NWay!", reply_markup={"remove_keyboard": True})
+                await self._call("sendMessage", chat_id=chat_id, text="NWay’ga xush kelibsiz! 👋", reply_markup={"remove_keyboard": True})
                 return await self.home(session, chat)
             if command == "/book":
-                return await self.origins(session, chat)
+                return await self.open_app(session, chat)
             if command in {"/tickets", "/lookup"}:
                 return await self.my_tickets(session, chat)
             if command == "/help":
@@ -356,7 +387,7 @@ class TelegramBotClient:
                 return await check(self, session, chat, text.partition(" ")[2].strip())
             if message.get("contact"):
                 if chat.data.get("stage") not in {"phone", "staff_phone"}:
-                    return await self.screen(chat_id, "Номер понадобится при оформлении. Нажмите «Найти рейс».")
+                    return await self.screen(chat_id, "Raqam bron uchun kerak bo‘ladi. «Reys topish» tugmasini bosing.")
                 contact = message["contact"]
                 if contact.get("user_id") != sender.get("id"):
                     raise DomainError("CONTACT_NOT_YOURS", "Поделитесь именно своим номером кнопкой под сообщением")
@@ -365,22 +396,22 @@ class TelegramBotClient:
                 user = await ReservationService(session)._get_or_create_user(phone, None)
                 chat.phone, chat.user_id = phone, user.id
                 await session.commit()
-                await self._call("sendMessage", chat_id=chat_id, text="Номер сохранён ✓", reply_markup={"remove_keyboard": True})
+                await self._call("sendMessage", chat_id=chat_id, text="Raqam saqlandi ✓", reply_markup={"remove_keyboard": True})
                 if chat.data.get("stage") == "staff_phone":
                     from app.services.telegram_admin import menu
                     return await menu(self, session, chat)
                 return await self.passenger(session, chat, sender)
             if chat.data.get("stage") == "name" and text:
                 return await self.review(session, chat, text)
-            await self.screen(chat_id, "Продолжите кнопками под последним сообщением или откройте главное меню.", keyboard([button("⌂ Главное меню", "home"), button("🧾 Мои билеты", "mine")]))
+            await self.screen(chat_id, "Pastdagi tugmalardan foydalaning yoki bosh menyuni oching.", keyboard([button("⌂ Bosh menyu", "home"), button("🧾 Chiptalarim", "mine")]))
         except (ValueError, KeyError, TypeError):
             await session.rollback()
-            await self.screen(chat_id, "Эта кнопка устарела. Откройте поиск заново — ваши оформленные билеты сохранены.", keyboard([button("🎫 Найти рейс", "book"), button("🧾 Мои билеты", "mine")]))
+            await self.screen(chat_id, "Bu tugma eskirgan. Qidiruvni qayta oching — chiptalaringiz saqlangan.", keyboard([button("🎫 Reys topish", "book"), button("🧾 Chiptalarim", "mine")]))
         except DomainError as error:
             await session.rollback()
             messages = {"SEAT_ALREADY_RESERVED": "Это место уже заняли. Выберите другое — новый заказ не создан.", "USER_BLOCKED": "Бронирование для этого аккаунта недоступно. Обратитесь в поддержку.", "RESERVATION_EXPIRED": "Время оформления истекло. Выберите рейс заново.", "TRIP_NOT_BOOKABLE": "Этот рейс больше недоступен.", "SEAT_NOT_BOOKABLE": "Это место недоступно. Выберите другое."}
             text = messages.get(error.code, error.message if any("а" <= ch.lower() <= "я" for ch in error.message) else "Не удалось оформить действие. Проверьте данные или начните поиск заново.")
-            await self.screen(chat_id, esc(text), keyboard([button("🎫 Найти рейс", "book"), button("🧾 Мои билеты", "mine")]))
+            await self.screen(chat_id, esc(text), keyboard([button("🎫 Reys topish", "book"), button("🧾 Chiptalarim", "mine")]))
 
     async def handle_action(self, session, chat, sender, action, message_id):
         name, _, value = action.partition(":")
@@ -395,7 +426,7 @@ class TelegramBotClient:
         if name == "home":
             return await self.home(session, chat, message_id)
         if name == "book":
-            return await self.origins(session, chat, message_id)
+            return await self.open_app(session, chat, message_id)
         if name == "o":
             return await self.destinations(session, chat, value, message_id)
         if name == "d":
@@ -442,9 +473,18 @@ class TelegramBotClient:
 
     async def help(self, chat, message_id=None):
         support = get_settings().TELEGRAM_SUPPORT
-        contact = f"\n\nПоддержка: {esc(support)}" if support else ""
-        await self.screen(chat.chat_id, "<b>💬 Помощь</b>\n\n1. Выберите маршрут, дату и рейс.\n2. Выберите место и укажите пассажира.\n3. Подтвердите заказ — получите билет с QR.\n\n💵 Оплата при посадке. Онлайн-оплата пока не подключена.\n🎫 Один пассажир на заказ. Для попутчика оформите ещё один билет.\n🕒 Время — местное для города отправления. Приезжайте за 20 минут.\n🧾 В «Мои билеты» можно скачать билет повторно или отменить неоплаченную поездку до отправления." + contact,
-            keyboard([button("🎫 Найти рейс", "book"), button("🧾 Мои билеты", "mine")], [button("⌂ Меню", "home")]), message_id)
+        contact = f"\n\n💬 Yordam: {esc(support)}" if support else ""
+        await self.screen(chat.chat_id,
+            "💬 <b>Qanday foydalaniladi?</b>\n\n"
+            "1️⃣ «Chipta sotib olish» tugmasini bosing.\n"
+            "2️⃣ Ilovada yo‘nalish, sana va joyni tanlang.\n"
+            "3️⃣ Ismingiz va telefon raqamingizni kiriting.\n"
+            "4️⃣ Bronni tasdiqlang — QR-chip­ta rasmini shu chatda olasiz.\n\n"
+            "💵 To‘lov avtobusga chiqishda. Onlayn to‘lov hali ulanmagan.\n"
+            "👥 4 va undan ortiq joyni operator tasdiqlaydi.\n"
+            "🕒 Vaqt jo‘nash shahri bo‘yicha. 20 daqiqa oldin keling.\n"
+            "🧾 «Chiptalarim» orqali chiptani qayta olish yoki to‘lanmagan bronni bekor qilish mumkin." + contact,
+            keyboard([button("🎫 Reys topish", "book"), button("🧾 Chiptalarim", "mine")], [button("🏠 Bosh menyu", "home")]), message_id)
 
     async def send_ticket(self, session, delivery):
         row = await session.get(Ticket, delivery.ticket_id)
@@ -462,21 +502,26 @@ class TelegramBotClient:
             origin=trip.route.origin_city.name, destination=trip.route.destination_city.name,
             departure_date=departure.strftime("%d.%m.%Y"), departure_time=departure.strftime("%H:%M"), arrival_time=arrival.strftime("%d.%m %H:%M"),
             passenger=" ".join(filter(None, [ticket.passenger.first_name, ticket.passenger.last_name])), seat=ticket.seat.seat_number,
-            bus=f"{trip.bus.name} · {trip.bus.registration_number}", boarding=trip.boarding_location or "Уточните место посадки у перевозчика",
+            bus=f"{trip.bus.name} · {trip.bus.registration_number}", boarding=trip.boarding_location or "Chiqish joyini tashuvchidan aniqlang",
             price=money(ticket.reservation.total_amount_minor, ticket.reservation.currency),
-            payment="Оплачено" if ticket.reservation.payment_status == PaymentStatus.paid else "Оплата при посадке", demo=get_settings().TELEGRAM_DEMO_MODE)
+            payment="To‘langan" if ticket.reservation.payment_status == PaymentStatus.paid else "To‘lov chiqishda", demo=get_settings().TELEGRAM_DEMO_MODE)
         png = await asyncio.to_thread(render_ticket, data)
         await self._call("sendPhoto", chat_id=delivery.chat_id, _photo=png,
-            caption=f"🎫 <b>Ваш билет · {esc(ticket.public_id)}</b>\n{esc(data.origin)} → {esc(data.destination)}\n{data.departure_date}, {data.departure_time} · место {esc(data.seat)}\n{esc(data.payment)}\n\nСохраните картинку. Актуальный статус — в «Мои билеты»." + ("\n🧪 Тестовый рейс, не для проезда." if data.demo else ""),
-            parse_mode="HTML", reply_markup=keyboard([button("Открыть заказ", f"view:{data.booking_code}")], [button("🧾 Все билеты", "mine")]))
+            caption=f"🎫 <b>Sizning chiptangiz · {esc(ticket.public_id)}</b>\n{esc(data.origin)} → {esc(data.destination)}\n{data.departure_date}, {data.departure_time} · joy {esc(data.seat)}\n{esc(data.payment)}\n\nRasmni saqlab qo‘ying. Joriy holat — «Chiptalarim» bo‘limida." + ("\n🧪 Sinov chiptasi. Haqiqiy safar uchun yaroqsiz." if data.demo else ""),
+            parse_mode="HTML", reply_markup=keyboard([button("Bronni ochish", f"view:{data.booking_code}")], [button("🧾 Barcha chiptalar", "mine")]))
 
 
 async def run_telegram_bot():
     from app.db.session import SessionLocal, engine
     from app.services.telegram_worker import run_worker
-    if not get_settings().TELEGRAM_BOT_TOKEN:
+    settings = get_settings()
+    if not settings.TELEGRAM_BOT_TOKEN:
         raise SystemExit("TELEGRAM_BOT_TOKEN is not set")
-    bot = TelegramBotClient(get_settings().TELEGRAM_BOT_TOKEN)
+    if not settings.telegram_polling and not settings.TELEGRAM_WEBHOOK_SECRET:
+        raise SystemExit(
+            "Webhook mode needs TELEGRAM_WEBHOOK_SECRET. "
+            "For local development set TELEGRAM_MODE=polling instead.")
+    bot = TelegramBotClient(settings.TELEGRAM_BOT_TOKEN)
     try:
         await run_worker(bot, SessionLocal, engine)
     finally:

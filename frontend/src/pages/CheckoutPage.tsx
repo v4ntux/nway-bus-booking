@@ -64,9 +64,11 @@ export function CheckoutPage() {
       seat_id: id,
       first_name: names[index].trim(),
     }));
-    saveDraft({ ...draft, phone: apiPhone, passengers });
+    const requestKey = draft.requestKey ?? crypto.randomUUID();
+    saveDraft({ ...draft, phone: apiPhone, passengers, requestKey });
     if (isTelegram) haptic("medium");
     mutation.mutate({
+      request_key: requestKey,
       trip_id: draft.tripId,
       seat_ids: draft.seatIds,
       contact_phone: apiPhone,
@@ -99,7 +101,7 @@ export function CheckoutPage() {
         <div className="glass rounded-panel p-4 sm:p-5">
           <Field
             label="Aloqa uchun telefon"
-            hint="Bron kodini yuboramiz va reys o‘zgarsa qo‘ng‘iroq qilamiz."
+            hint="Reys bo‘yicha bog‘lanish uchun. Telegramda chipta shu chatga yuboriladi."
             htmlFor="phone"
             error={touched && !phoneValid ? "Raqamni to‘liq kiriting." : undefined}
           >

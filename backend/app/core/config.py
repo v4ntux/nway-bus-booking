@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_WEBAPP_URL: str = "http://localhost:5173"
     TELEGRAM_BOT_ENABLED: bool = False
+    # "webhook" needs a public HTTPS backend; "polling" works from a laptop.
+    TELEGRAM_MODE: str = "webhook"
     TELEGRAM_WEBHOOK_SECRET: str = ""
     TELEGRAM_SUPPORT: str = ""
     TELEGRAM_DEMO_MODE: bool = True
@@ -126,6 +128,17 @@ class Settings(BaseSettings):
                 "PostgreSQL is not linked to this Railway service: "
                 f"{variable} points to localhost. {fix}"
             )
+
+    @property
+    def telegram_polling(self) -> bool:
+        return self.TELEGRAM_MODE.strip().lower() == "polling"
+
+    @property
+    def telegram_ready(self) -> bool:
+        """The bot can run once it has a token, plus a secret when webhook-driven."""
+        if not (self.TELEGRAM_BOT_ENABLED and self.TELEGRAM_BOT_TOKEN):
+            return False
+        return self.telegram_polling or bool(self.TELEGRAM_WEBHOOK_SECRET)
 
     @property
     def cors_origin_list(self) -> list[str]:

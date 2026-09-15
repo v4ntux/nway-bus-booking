@@ -1,3 +1,4 @@
+import asyncio
 from datetime import timedelta
 from io import BytesIO
 from unittest.mock import AsyncMock
@@ -14,7 +15,7 @@ from app.models import Payment, PaymentStatus, Reservation, ReservationStatus, T
 from app.models.telegram import TelegramChat, TelegramDelivery, TelegramUpdate
 from app.services.payment import PaymentService
 from app.services.telegram_bot import TelegramAPIError, TelegramBotClient, button, money
-from app.services.telegram_worker import deliver_one, process_one
+from app.services.telegram_worker import deliver_one, poll_updates, process_one
 from app.services.ticket import TicketService
 from app.services.trip import TripService
 from app.utils.time import utcnow
@@ -89,7 +90,7 @@ async def test_full_bot_booking_survives_new_sessions_and_sends_png(engine, worl
     image = Image.open(BytesIO(photos[0]["_photo"]))
     assert image.size == (1080, 1550)
     assert image.format == "PNG"
-    assert "Оплата при посадке" in photos[0]["caption"]
+    assert "To‘lov chiqishda" in photos[0]["caption"]
     assert not await deliver_one(bot, sessions)
     await send(action=f"image:{code}")
     assert await deliver_one(bot, sessions)
@@ -130,7 +131,9 @@ async def test_other_telegram_user_cannot_access_or_cancel_booking(engine, world
     for action in (f"view:{code}", f"image:{code}", f"cancel:{code}"):
         async with sessions() as session:
             await bot.handle_update(update(action=action, chat_id=9999), session)
-        assert "Заказ не найден" in bot.calls[-1][1]["text"]
+        # The refusal must not leak the booking code or trip details to a stranger.
+        assert code not in bot.calls[-1][1]["text"]
+        assert not [p for m, p in bot.calls if m == "sendPhoto"]
     async with sessions() as session:
         assert (await session.scalar(select(Reservation))).status == ReservationStatus.confirmed
 
@@ -225,8 +228,8 @@ async def test_mock_payments_are_disabled_by_default(world, monkeypatch):
 
 
 def test_callback_budget_and_price_format():
-    assert money(9_500_000) == "95 000 сум"
-    assert money(12345) == "123,45 сум"
+    assert money(9_500_000) == "95 000 so‘m"
+    assert money(12345) == "123,45 so‘m"
     with pytest.raises(ValueError):
         button("too long", "ю" * 33)
 
@@ -292,3 +295,57 @@ async def test_other_staff_company_cannot_open_ticket(engine, world):
         ticket = await session.scalar(select(Ticket))
         with pytest.raises(DomainError, match="другому перевозчику"):
             await telegram_admin.check(bot, session, chat, ticket.public_id)
+
+
+class PollingBot(FakeTelegram):
+    """Serves canned getUpdates batches, then cancels to end the endless poll loop."""
+
+    def __init__(self, batches):
+        super().__init__()
+        self.batches = list(batches)
+        self.offsets = []
+
+    async def _call(self, method, **payload):
+        self.calls.append((method, payload))
+        if method != "getUpdates":
+            return {}
+        self.offsets.append(payload["offset"])
+        if not self.batches:
+            raise asyncio.CancelledError
+        return self.batches.pop(0)
+
+
+async def test_polling_ingests_updates_and_advances_the_offset(engine):
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    bot = PollingBot([[update(text="/start", update_id=7), update(action="book", update_id=8)]])
+
+    with pytest.raises(asyncio.CancelledError):
+        await poll_updates(bot, sessions)
+
+    # Telegram refuses getUpdates while a webhook is registered.
+    assert [method for method, _ in bot.calls][0] == "deleteWebhook"
+    # Starts from a clean inbox, then acknowledges only past the batch it stored.
+    assert bot.offsets == [1, 9]
+    async with sessions() as session:
+        stored = list((await session.scalars(select(TelegramUpdate).order_by(TelegramUpdate.update_id))).all())
+    assert [row.update_id for row in stored] == [7, 8]
+    assert stored[0].payload["message"]["text"] == "/start"
+    assert all(row.processed_at is None and row.attempts == 0 for row in stored)
+
+
+async def test_polling_resumes_after_stored_updates_and_ignores_replays(engine):
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    async with sessions() as session:
+        session.add(TelegramUpdate(update_id=42, payload=update(text="/start", update_id=42)))
+        await session.commit()
+
+    # Telegram replaying an already-stored update must not duplicate the inbox row.
+    bot = PollingBot([[update(text="/help", update_id=42), update(text="/tickets", update_id=43)]])
+    with pytest.raises(asyncio.CancelledError):
+        await poll_updates(bot, sessions)
+
+    assert bot.offsets == [43, 44]
+    async with sessions() as session:
+        stored = list((await session.scalars(select(TelegramUpdate).order_by(TelegramUpdate.update_id))).all())
+    assert [row.update_id for row in stored] == [42, 43]
+    assert stored[0].payload["message"]["text"] == "/start"
