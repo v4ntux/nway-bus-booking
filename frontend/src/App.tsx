@@ -9,6 +9,8 @@ import { PaymentPage } from "./pages/PaymentPage";
 import { SuccessPage } from "./pages/SuccessPage";
 import { TicketPage } from "./pages/TicketPage";
 import { LookupPage } from "./pages/LookupPage";
+import { MyTicketsPage } from "./pages/MyTicketsPage";
+import { HelpPage } from "./pages/HelpPage";
 import { AdminLoginPage } from "./pages/admin/AdminLoginPage";
 import { DashboardPage } from "./pages/admin/DashboardPage";
 import { CitiesPage } from "./pages/admin/CitiesPage";
@@ -21,6 +23,7 @@ import { PassengersPage } from "./pages/admin/PassengersPage";
 import { PaymentsPage } from "./pages/admin/PaymentsPage";
 import { UsersPage } from "./pages/admin/UsersPage";
 import { CompaniesPage } from "./pages/admin/CompaniesPage";
+import { FaqPage } from "./pages/admin/FaqPage";
 
 export default function App() {
   return (
@@ -35,6 +38,9 @@ export default function App() {
         <Route path="/success/:code" element={<SuccessPage />} />
         <Route path="/ticket/:publicId" element={<TicketPage />} />
         <Route path="/lookup" element={<LookupPage />} />
+        <Route path="/my" element={<MyTicketsPage />} />
+        <Route path="/faq" element={<HelpPage />} />
+        <Route path="/support" element={<HelpPage />} />
       </Route>
       <Route path="/login" element={<AdminLoginPage />} />
       <Route path="/admin" element={<AdminLayout />}>
@@ -49,6 +55,7 @@ export default function App() {
         <Route path="payments" element={<PaymentsPage />} />
         <Route path="users" element={<UsersPage />} />
         <Route path="companies" element={<CompaniesPage />} />
+        <Route path="faq" element={<FaqPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

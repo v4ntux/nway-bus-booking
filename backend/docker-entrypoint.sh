@@ -16,4 +16,7 @@ if [ "${RUN_SEED:-true}" != "false" ]; then
   python -m app.cli seed
 fi
 
+# Starter FAQ only fills an empty table; operator edits are never overwritten.
+python -m app.cli seed-faq
+
 exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT"

@@ -8,6 +8,7 @@ from app.services.reservation import ReservationService
 from app.services.seed import refresh_trip_schedule, seed_database
 from app.services.telegram_bot import run_telegram_bot
 from app.services.telegram_bot import TelegramBotClient
+from app.services.telegram_worker import ALLOWED_UPDATES
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,14 @@ logger = logging.getLogger(__name__)
 async def cmd_seed() -> None:
     async with SessionLocal() as session:
         await seed_database(session)
+    await cmd_seed_faq()
+
+
+async def cmd_seed_faq() -> None:
+    from app.services.faq import ensure_default_faq
+    async with SessionLocal() as session:
+        added = await ensure_default_faq(session)
+        logger.info("seeded_faq added=%s", added)
 
 
 async def cmd_refresh_trips() -> None:
@@ -42,7 +51,7 @@ async def cmd_telegram_webhook(url: str) -> None:
         await bot.setup()
         await bot._call("setWebhook", url=url.rstrip("/") + "/telegram/webhook",
                         secret_token=settings.TELEGRAM_WEBHOOK_SECRET,
-                        allowed_updates=["message", "callback_query"], max_connections=10)
+                        allowed_updates=ALLOWED_UPDATES, max_connections=10)
         print(f"Telegram webhook configured for @{bot.username}")
     finally:
         await bot.close()
@@ -53,6 +62,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="nway")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("seed", help="Insert demo data")
+    sub.add_parser("seed-faq", help="Insert starter FAQ into an empty FAQ table (idempotent)")
     sub.add_parser("refresh-trips", help="Top up the rolling demo schedule (idempotent)")
     sub.add_parser("expire-reservations", help="Expire holds and unpaid bookings past deadline")
     sub.add_parser("telegram-bot", help="Run the durable Telegram inbox worker")
@@ -61,6 +71,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "seed":
         asyncio.run(cmd_seed())
+    elif args.command == "seed-faq":
+        asyncio.run(cmd_seed_faq())
     elif args.command == "refresh-trips":
         asyncio.run(cmd_refresh_trips())
     elif args.command == "expire-reservations":

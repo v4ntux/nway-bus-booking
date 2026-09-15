@@ -27,6 +27,25 @@ export function clearTokens(): void {
   localStorage.removeItem("nway_refresh_token");
 }
 
+const BOOKING_PHONE_KEY = "nway_booking_phone";
+
+/** Web bookings are opened with code + contact phone; the code alone is not enough. */
+export function rememberBookingPhone(phone: string): void {
+  try {
+    localStorage.setItem(BOOKING_PHONE_KEY, phone);
+  } catch {
+    /* storage blocked: lookup by phone still works */
+  }
+}
+
+function bookingPhone(): string | null {
+  try {
+    return localStorage.getItem(BOOKING_PHONE_KEY);
+  } catch {
+    return null;
+  }
+}
+
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "";
 
 export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -37,6 +56,8 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   const token = getToken();
   const telegramData = window.Telegram?.WebApp?.initData;
   if (telegramData) headers.set("X-Telegram-Init-Data", telegramData);
+  const phone = telegramData ? null : bookingPhone();
+  if (phone) headers.set("X-Booking-Phone", phone);
   if (token && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${token}`);
   }

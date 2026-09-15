@@ -2,7 +2,9 @@ import { FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight } from "@phosphor-icons/react";
+import WebApp from "@twa-dev/sdk";
 import { bookingApi } from "../api/booking";
+import { rememberBookingPhone } from "../api/client";
 import { catalogApi } from "../api/catalog";
 import { TripStrip } from "../components/TripCard";
 import { Amount, Button, EmptyState, ErrorBox, Field, Input, backLinkClass } from "../components/Ui";
@@ -49,6 +51,21 @@ export function CheckoutPage() {
     );
   }
 
+  const canShareContact = isTelegram && WebApp.isVersionAtLeast("6.9");
+
+  function shareContact() {
+    try {
+      WebApp.requestContact((granted, result) => {
+        if (!granted || !result || result.status !== "sent") return;
+        const raw = new URLSearchParams(result.response).get("contact");
+        const shared: string = raw ? (JSON.parse(raw).phone_number ?? "") : "";
+        if (shared) setPhone(formatPhoneDisplay(shared.startsWith("+") ? shared : `+${shared}`));
+      });
+    } catch {
+      /* Older Telegram client: typing the number still works. */
+    }
+  }
+
   const digits = phone.replace(/\D/g, "");
   const phoneValid = digits.length >= 12;
   const missingName = draft.seatIds.some((_, i) => !(names[i] ?? "").trim());
@@ -66,6 +83,7 @@ export function CheckoutPage() {
     }));
     const requestKey = draft.requestKey ?? crypto.randomUUID();
     saveDraft({ ...draft, phone: apiPhone, passengers, requestKey });
+    rememberBookingPhone(apiPhone);
     if (isTelegram) haptic("medium");
     mutation.mutate({
       request_key: requestKey,
@@ -116,6 +134,11 @@ export function CheckoutPage() {
               className="tnum"
             />
           </Field>
+          {canShareContact && (
+            <Button type="button" variant="secondary" size="sm" className="mt-3" onClick={shareContact}>
+              📱 Telegramdagi raqamni olish
+            </Button>
+          )}
         </div>
 
         <div className="glass flex flex-col gap-4 rounded-panel p-4 sm:p-5">

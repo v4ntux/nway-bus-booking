@@ -255,6 +255,43 @@ export type TripPatchIn = {
   destination_location?: string;
 };
 
+export type MyReservation = Reservation & {
+  trip: {
+    departure_datetime: string;
+    estimated_arrival_datetime: string;
+    origin_city: string;
+    destination_city: string;
+    origin_timezone: string;
+    destination_timezone: string;
+    boarding_location: string | null;
+  };
+  tickets: { public_id: string; seat_number: string | null; status: string; passenger_name: string }[];
+  can_cancel: boolean;
+};
+
+export type FaqLang = "uz" | "ru";
+
+export type FaqItem = {
+  id: string;
+  lang: FaqLang;
+  category: string;
+  question: string;
+  answer: string;
+  position: number;
+  active: boolean;
+  updated_at: string;
+};
+
+export type FaqIn = Omit<FaqItem, "id" | "updated_at">;
+
+export type AppConfig = {
+  demo_mode: boolean;
+  payment_methods: string[];
+  bot_username: string | null;
+  support_contact: string | null;
+  support_chat: boolean;
+};
+
 export type Page<T> = {
   items: T[];
   page: number;

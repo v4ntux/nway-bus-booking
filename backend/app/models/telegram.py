@@ -16,8 +16,19 @@ class TelegramChat(Base):
     chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     user_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id"))
     phone: Mapped[str | None] = mapped_column(String(32))
+    lang: Mapped[str | None] = mapped_column(String(2))
     data: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class TelegramSupportMessage(Base):
+    """Maps a message posted in the support group back to the passenger's chat."""
+
+    __tablename__ = "telegram_support_messages"
+
+    group_message_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class TelegramUpdate(Base):

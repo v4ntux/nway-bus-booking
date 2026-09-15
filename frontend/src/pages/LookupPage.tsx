@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { MagnifyingGlass } from "@phosphor-icons/react";
 import { bookingApi } from "../api/booking";
+import { rememberBookingPhone } from "../api/client";
 import { Button, ErrorBox, Field, Input, followSpot } from "../components/Ui";
 import { formatPhoneDisplay, phoneToApi } from "../utils/format";
 
@@ -12,7 +13,10 @@ export function LookupPage() {
   const [code, setCode] = useState("");
   const mutation = useMutation({
     mutationFn: () => bookingApi.lookup(phoneToApi(phone), code.trim().toUpperCase()),
-    onSuccess: (reservation) => navigate(`/success/${reservation.public_code}`, { viewTransition: true }),
+    onSuccess: (reservation) => {
+      rememberBookingPhone(phoneToApi(phone));
+      navigate(`/success/${reservation.public_code}`, { viewTransition: true });
+    },
   });
 
   function onSubmit(event: FormEvent) {

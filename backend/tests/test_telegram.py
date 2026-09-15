@@ -33,8 +33,10 @@ class FakeTelegram(TelegramBotClient):
         return {"message_id": len(self.calls)}
 
 
-def update(*, action=None, text=None, contact=None, chat_id=4242, update_id=1):
+def update(*, action=None, text=None, contact=None, chat_id=4242, update_id=1, lang=None):
     sender = {"id": chat_id, "first_name": "Али", "last_name": "Каримов"}
+    if lang:
+        sender["language_code"] = lang
     message = {"message_id": 10, "chat": {"id": chat_id, "type": "private"}, "from": sender}
     if action:
         return {"update_id": update_id, "callback_query": {"id": str(update_id), "from": sender, "message": message, "data": action}}
@@ -142,7 +144,7 @@ async def test_foreign_contact_does_not_link_account(engine, world):
     bot = FakeTelegram()
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with sessions() as session:
-        session.add(TelegramChat(chat_id=4242, data={"stage": "phone"}))
+        session.add(TelegramChat(chat_id=4242, lang="ru", data={"stage": "phone"}))
         await session.commit()
         await bot.handle_update(update(contact={"user_id": 9999, "phone_number": "998901234567"}), session)
     async with sessions() as session:

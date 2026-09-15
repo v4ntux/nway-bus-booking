@@ -72,6 +72,20 @@ ALLOWED_TRANSITIONS: dict[ReservationStatus, set[ReservationStatus]] = {
 }
 
 
+async def queue_telegram_tickets(session: AsyncSession, reservation_id: UUID, chat_id: int, *, resend: bool = False) -> None:
+    """Queue PNG delivery of every valid ticket; the caller commits. `resend` resets sent ones."""
+    tickets = await session.scalars(select(Ticket).where(
+        Ticket.reservation_id == reservation_id, Ticket.status == TicketStatus.valid))
+    for ticket in tickets:
+        stmt = insert(TelegramDelivery).values(ticket_id=ticket.id, chat_id=chat_id, attempts=0)
+        if resend:
+            stmt = stmt.on_conflict_do_update(index_elements=[TelegramDelivery.ticket_id], set_={
+                "sent_at": None, "attempts": 0, "available_at": utcnow(), "last_error": None})
+        else:
+            stmt = stmt.on_conflict_do_nothing(index_elements=[TelegramDelivery.ticket_id])
+        await session.execute(stmt)
+
+
 @dataclass
 class PassengerInput:
     seat_id: UUID
@@ -263,11 +277,7 @@ class ReservationService:
         await self._issue_tickets(reservation)
         await self.session.flush()
         if reservation.telegram_chat_id:
-            tickets = await self.session.scalars(select(Ticket).where(Ticket.reservation_id == reservation.id))
-            for ticket in tickets:
-                await self.session.execute(insert(TelegramDelivery).values(
-                    ticket_id=ticket.id, chat_id=reservation.telegram_chat_id, attempts=0,
-                ).on_conflict_do_nothing(index_elements=[TelegramDelivery.ticket_id]))
+            await queue_telegram_tickets(self.session, reservation.id, reservation.telegram_chat_id)
         await write_audit(
             self.session,
             actor_id=actor_id,

@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     TELEGRAM_MODE: str = "webhook"
     TELEGRAM_WEBHOOK_SECRET: str = ""
     TELEGRAM_SUPPORT: str = ""
+    # Without @. Needed for t.me links (inline mode, QR, Mini App support button).
+    TELEGRAM_BOT_USERNAME: str = ""
+    # Group (e.g. -1001234567890) where passenger questions arrive; operators reply there.
+    TELEGRAM_SUPPORT_CHAT_ID: int = 0
     TELEGRAM_DEMO_MODE: bool = True
     TELEGRAM_BOOKING_CUTOFF_MINUTES: int = 30
     ALLOW_MOCK_PAYMENTS: bool = False

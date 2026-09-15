@@ -14,6 +14,7 @@ from app.utils.time import utcnow
 
 logger = logging.getLogger(__name__)
 LOCK_ID = 637492017
+ALLOWED_UPDATES = ["message", "callback_query", "inline_query"]
 
 
 async def process_one(bot, sessions):
@@ -84,7 +85,7 @@ async def poll_updates(bot, sessions):
     while True:
         try:
             updates = await bot._call("getUpdates", offset=offset, timeout=25,
-                                      allowed_updates=["message", "callback_query"])
+                                      allowed_updates=ALLOWED_UPDATES)
         except TelegramAPIError as error:
             logger.warning("telegram_poll_error code=%s", error.code)
             await asyncio.sleep(max(error.retry_after, 3))
@@ -134,6 +135,11 @@ async def run_worker(bot, sessions, engine):
                                 await ReservationService(session).expire_pending_reservations()
                                 await session.execute(delete(TelegramUpdate).where(TelegramUpdate.processed_at < utcnow() - timedelta(days=7)))
                                 await session.commit()
+                            try:
+                                async with sessions() as session:
+                                    await bot.send_reminders(session)
+                            except Exception as error:
+                                logger.warning("telegram_reminders_error type=%s", type(error).__name__)
                             last_maintenance = utcnow()
                         await asyncio.sleep(0.05 if worked or delivered else 1)
                 finally:

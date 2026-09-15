@@ -42,6 +42,8 @@ class Reservation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     contact_phone: Mapped[str] = mapped_column(String(32), nullable=False)
     deposit_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     deposit_received: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reminder_day_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reminder_soon_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     trip: Mapped[Trip] = relationship()
     seats: Mapped[list["ReservationSeat"]] = relationship(back_populates="reservation")

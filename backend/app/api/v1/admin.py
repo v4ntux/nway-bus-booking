@@ -6,7 +6,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import StaffUser, db_session
+from app.api.deps import AdminUser, StaffUser, db_session
+from app.models.faq import FaqItem
+from app.schemas.faq import FaqIn, FaqOut
 from app.api.serializers import reservation_to_out
 from app.core.config import get_settings
 from app.core.exceptions import DomainError, ForbiddenError, NotFoundError
@@ -75,6 +77,42 @@ def _company_id(actor: User, requested: UUID | None) -> UUID:
     if requested and requested != actor.company_id:
         raise ForbiddenError("COMPANY_SCOPE", "Not allowed for this company")
     return actor.company_id
+
+
+@router.get("/faq", response_model=list[FaqOut])
+async def admin_faq(session: AsyncSession = Depends(db_session)):
+    result = await session.scalars(select(FaqItem).order_by(FaqItem.lang, FaqItem.position, FaqItem.created_at))
+    return [FaqOut.model_validate(item) for item in result.all()]
+
+
+@router.post("/faq", response_model=FaqOut, status_code=201, dependencies=[Depends(AdminUser)])
+async def create_faq(body: FaqIn, session: AsyncSession = Depends(db_session)):
+    item = FaqItem(**body.model_dump())
+    session.add(item)
+    await session.commit()
+    await session.refresh(item)
+    return FaqOut.model_validate(item)
+
+
+@router.patch("/faq/{item_id}", response_model=FaqOut, dependencies=[Depends(AdminUser)])
+async def patch_faq(item_id: UUID, body: FaqIn, session: AsyncSession = Depends(db_session)):
+    item = await session.get(FaqItem, item_id)
+    if item is None:
+        raise NotFoundError("FAQ_NOT_FOUND", "FAQ entry not found")
+    for key, value in body.model_dump().items():
+        setattr(item, key, value)
+    await session.commit()
+    await session.refresh(item)
+    return FaqOut.model_validate(item)
+
+
+@router.delete("/faq/{item_id}", status_code=204, dependencies=[Depends(AdminUser)])
+async def delete_faq(item_id: UUID, session: AsyncSession = Depends(db_session)):
+    item = await session.get(FaqItem, item_id)
+    if item is None:
+        raise NotFoundError("FAQ_NOT_FOUND", "FAQ entry not found")
+    await session.delete(item)
+    await session.commit()
 
 
 @router.get("/dashboard", response_model=DashboardOut)

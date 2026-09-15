@@ -6,6 +6,26 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "frontend"],
       "port": 5173
+    },
+    {
+      "name": "nway-backend",
+      "runtimeExecutable": "backend/.venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--app-dir", "backend", "--port", "8000", "--reload", "--reload-dir", "backend/app"],
+      "port": 8000
+    },
+    {
+      "name": "nway-backend-8001",
+      "runtimeExecutable": "backend/.venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--app-dir", "backend", "--port", "8001"],
+      "env": { "TELEGRAM_BOT_ENABLED": "false" },
+      "port": 8001
+    },
+    {
+      "name": "nway-frontend-5174",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "frontend", "--", "--port", "5174", "--strictPort"],
+      "env": { "NWAY_API_URL": "http://localhost:8001" },
+      "port": 5174
     }
   ]
 }

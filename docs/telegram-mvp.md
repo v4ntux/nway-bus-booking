@@ -4,6 +4,32 @@ The bot works entirely in Telegram: `/start` → origin → destination → date
 
 `/tickets` lists the user's last ten bookings. They can resend a ticket and cancel an unpaid booking before departure. Cancellation releases the seat and invalidates the QR. The contact-share button must contain the sender's own Telegram user ID. Bot bookings cannot be fetched or cancelled anonymously through public API codes.
 
+## Launch features
+
+**Languages.** Passenger screens are Uzbek by default and Russian for Russian-speaking Telegram clients (`ru`, `uk`, `be`, `kk`, `ky`). «🌐» in the main menu or `/lang` switches it; the choice is stored per chat and used for tickets and reminders. Staff screens stay Russian. The Mini App UI is Uzbek; its FAQ page has its own language switch.
+
+**Entry points.** Main menu: «Купить билет» (Mini App `/book`), «Мои билеты», «Вопросы», «Поддержка», language. The ticket photo carries «Открыть билет» (Mini App `/ticket/<id>`). `web_app` buttons only work in private chats; for channels, groups and posts use `https://t.me/<bot>?startapp=<param>`:
+
+| `startapp` | Opens |
+|---|---|
+| *(empty)* / `book` | search |
+| `my` | my tickets |
+| `faq`, `support` | help centre |
+| `t_<TICKET_ID>` | ticket |
+| `r<origin><destination>` | trip results for today (UUIDs as 22-char base64url, see `app/utils/startapp.py`) |
+
+`?start=support`, `?start=faq`, `?start=tickets` open the matching bot screen.
+
+**Inline mode.** `@<bot> ташкент` lists routes with upcoming trips and a «Купить билет» link into the Mini App.
+
+**FAQ.** Stored in `faq_items`, edited under Admin → «Savollar (FAQ)» (admin/superadmin). Starter content is inserted by `python -m app.cli seed-faq` only into an empty table; the Docker entrypoint runs it on every start.
+
+**Support.** With `TELEGRAM_SUPPORT_CHAT_ID` set, «Поддержка» puts the chat in support mode: each passenger message is copied into the group under a card (name, phone, last booking); messages within 30 minutes join the same thread. An operator **replies** to the passenger's message and the bot delivers the answer. Replies to replies continue the thread. Without the group, the screen shows `TELEGRAM_SUPPORT` text.
+
+**Reminders.** The worker messages Telegram passengers of confirmed bookings once a day before departure (skipped for bookings made within 12 hours of it) and once two hours before (skipped for bookings under an hour old).
+
+**Privacy of web bookings.** A booking made outside Telegram opens only with the code **and** its contact phone (`X-Booking-Phone`, remembered by the browser after checkout or lookup). The code alone returns 404. Online cancellation is limited to unpaid bookings before departure.
+
 ## Staff
 
 `/admin` asks for the staff member's own Telegram contact and checks the existing NWay user role. It never grants roles. Use the phone belonging to an existing operator, admin, superadmin or driver. Company boundaries apply to every action. Staff can view bookings, record received cash (operator/admin), and confirm boarding. Scan a PNG ticket's QR with a phone camera: its Telegram link opens the protected ticket check. `/check TICKET_ID` also works. Scanning alone does not mark a ticket used; the staff member confirms boarding with a button.
@@ -53,7 +79,15 @@ ALLOW_MOCK_PAYMENTS=false
 DEBUG=false
 ```
 
-`TELEGRAM_SUPPORT` is optional contact text supplied by the operator. `TELEGRAM_BOOKING_CUTOFF_MINUTES` defaults to 30. Configure a non-default `JWT_SECRET`. Keep secrets in Railway variables; never commit them.
+`TELEGRAM_SUPPORT` is optional contact text supplied by the operator. `TELEGRAM_BOT_USERNAME` (without @) enables t.me links in the Mini App. `TELEGRAM_SUPPORT_CHAT_ID` enables the support relay.
+
+BotFather, once per bot:
+
+1. `/newapp` or *Bot Settings → Configure Mini App*: set the Main Mini App URL to `TELEGRAM_WEBAPP_URL`. Required for `t.me/<bot>?startapp` links.
+2. `/setinline`: enable inline mode with a placeholder such as `Ташкент Самарканд`.
+3. Support group: create a group, add the bot, then either make it an admin or turn off privacy mode (`/setprivacy` → Disable). Otherwise the bot only sees replies to its own messages. Get the group id (for example, forward a group message to `@RawDataBot`) and set `TELEGRAM_SUPPORT_CHAT_ID`.
+
+Re-run `python -m app.cli telegram-webhook --url …` after upgrading: the webhook must now include `inline_query` updates. `TELEGRAM_BOOKING_CUTOFF_MINUTES` defaults to 30. Configure a non-default `JWT_SECRET`. Keep secrets in Railway variables; never commit them.
 
 After deployment, register the webhook using a shell with backend environment variables:
 

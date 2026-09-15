@@ -74,6 +74,29 @@ class ReservationOut(ORMModel):
     payments: list[PaymentOut] = []
 
 
+class TripBriefOut(BaseModel):
+    departure_datetime: datetime
+    estimated_arrival_datetime: datetime
+    origin_city: str
+    destination_city: str
+    origin_timezone: str
+    destination_timezone: str
+    boarding_location: str | None
+
+
+class MyTicketOut(BaseModel):
+    public_id: str
+    seat_number: str | None
+    status: TicketStatus
+    passenger_name: str
+
+
+class MyReservationOut(ReservationOut):
+    trip: TripBriefOut
+    tickets: list[MyTicketOut] = []
+    can_cancel: bool
+
+
 class BookingLookupIn(BaseModel):
     phone: str
     public_code: str

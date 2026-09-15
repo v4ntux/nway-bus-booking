@@ -21,7 +21,8 @@ from app.models.reservation import Reservation, ReservationPassenger, Reservatio
 from app.models.route import Route, RouteStop
 from app.models.ticket import Ticket
 from app.models.trip import Trip
-from app.models.telegram import TelegramChat, TelegramDelivery, TelegramUpdate
+from app.models.telegram import TelegramChat, TelegramDelivery, TelegramSupportMessage, TelegramUpdate
+from app.models.faq import FaqItem
 
 __all__ = [
     "AuditLog",

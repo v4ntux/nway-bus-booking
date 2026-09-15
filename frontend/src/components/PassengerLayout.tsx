@@ -1,13 +1,34 @@
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { apiRequest } from "../api/client";
 import WebApp from "@twa-dev/sdk";
 import { Link, Outlet, useLocation, useMatch, useNavigate } from "react-router-dom";
-import { MagnifyingGlass, X } from "@phosphor-icons/react";
+import { MagnifyingGlass, Question, Ticket, X } from "@phosphor-icons/react";
+import { supportApi } from "../api/support";
 import { BrandMark } from "./BrandMark";
 import { Stepper } from "./Stepper";
 import { ThemeToggle } from "./ThemeToggle";
 import { useTelegram } from "../telegram/TelegramProvider";
+import { startParamPath } from "../telegram/startParam";
+
+const headerLinkClass =
+  "glass inline-flex h-11 items-center gap-2 rounded-control px-3.5 text-[14px] font-medium text-ink no-underline transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-accent/40";
+
+/** A t.me/<bot>?startapp=… link lands once per Mini App session, not on every reload. */
+function useStartParamRedirect(isTelegram: boolean) {
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (!isTelegram) return;
+    const target = startParamPath(WebApp.initDataUnsafe.start_param);
+    if (!target) return;
+    try {
+      if (sessionStorage.getItem("nway_start_param_done")) return;
+      sessionStorage.setItem("nway_start_param_done", "1");
+    } catch {
+      /* storage blocked: redirect anyway */
+    }
+    navigate(target, { replace: true });
+  }, [isTelegram, navigate]);
+}
 
 function useBookingStep(): 0 | 1 | 2 | 3 | null {
   const { pathname } = useLocation();
@@ -37,8 +58,9 @@ export function PassengerLayout() {
   const step = useBookingStep();
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const config = useQuery({ queryKey: ["app-config"], queryFn: () => apiRequest<{ demo_mode: boolean }>("/api/v1/app-config"), staleTime: 60_000 });
+  const config = useQuery({ queryKey: ["app-config"], queryFn: supportApi.appConfig, staleTime: 60_000 });
   const { isTelegram, user, close } = useTelegram();
+  useStartParamRedirect(isTelegram);
 
   useEffect(() => {
     if (!isTelegram) return;
@@ -74,14 +96,20 @@ export function PassengerLayout() {
                     Salom, {user.first_name}
                   </span>
                 )}
-                <Link
-                  to="/lookup"
-                  aria-label="Chiptani topish"
-                  viewTransition
-                  className="glass inline-flex h-11 items-center gap-2 rounded-control px-3.5 text-[14px] font-medium text-ink no-underline transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-accent/40"
-                >
-                  <MagnifyingGlass size={16} weight="bold" />
-                  <span className="hidden sm:inline">Chiptani topish</span>
+                {isTelegram ? (
+                  <Link to="/my" aria-label="Chiptalarim" viewTransition className={headerLinkClass}>
+                    <Ticket size={16} weight="bold" />
+                    <span className="hidden sm:inline">Chiptalarim</span>
+                  </Link>
+                ) : (
+                  <Link to="/lookup" aria-label="Chiptani topish" viewTransition className={headerLinkClass}>
+                    <MagnifyingGlass size={16} weight="bold" />
+                    <span className="hidden sm:inline">Chiptani topish</span>
+                  </Link>
+                )}
+                <Link to="/faq" aria-label="Yordam" viewTransition className={headerLinkClass}>
+                  <Question size={16} weight="bold" />
+                  <span className="hidden sm:inline">Yordam</span>
                 </Link>
                 {isTelegram ? (
                   <button
@@ -127,6 +155,13 @@ export function PassengerLayout() {
                   className="text-ink no-underline underline-offset-4 transition-opacity duration-200 hover:opacity-70 hover:underline"
                 >
                   Bronni tekshirish
+                </Link>
+                <Link
+                  to="/faq"
+                  viewTransition
+                  className="text-ink no-underline underline-offset-4 transition-opacity duration-200 hover:opacity-70 hover:underline"
+                >
+                  Yordam
                 </Link>
                 <Link
                   to="/login"

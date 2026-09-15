@@ -9,6 +9,7 @@ import {
   List,
   MapPin,
   Path,
+  Question,
   SignOut,
   Ticket,
   UserCircle,
@@ -44,6 +45,7 @@ const GROUPS: { title: string; links: { to: string; label: string; icon: typeof 
     links: [
       { to: "users", label: "Foydalanuvchilar", icon: UserCircle },
       { to: "companies", label: "Kompaniyalar", icon: Buildings },
+      { to: "faq", label: "Savollar (FAQ)", icon: Question },
     ],
   },
 ];

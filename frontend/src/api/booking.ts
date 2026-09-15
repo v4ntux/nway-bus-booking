@@ -1,5 +1,5 @@
 import { apiRequest } from "./client";
-import type { PassengerIn, Payment, Reservation, Ticket } from "../types/api";
+import type { MyReservation, PassengerIn, Payment, Reservation, Ticket } from "../types/api";
 
 export const bookingApi = {
   createReservation: (body: {
@@ -30,6 +30,9 @@ export const bookingApi = {
       method: "POST",
       body: JSON.stringify({ phone, public_code }),
     }),
+  mine: () => apiRequest<MyReservation[]>("/api/v1/me/reservations"),
+  resendToTelegram: (code: string) =>
+    apiRequest<{ queued: boolean }>(`/api/v1/reservations/${code}/telegram-resend`, { method: "POST" }),
   tickets: (code: string) => apiRequest<Ticket[]>(`/api/v1/reservations/${code}/tickets`),
   ticket: (publicId: string) => apiRequest<Ticket>(`/api/v1/tickets/${publicId}`),
 };
